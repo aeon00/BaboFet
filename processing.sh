@@ -7,7 +7,6 @@
 #SBATCH --time=04:00:00
 #SBATCH --output=/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/analysis/spangy/logs/slurm_%A_%a.out
 #SBATCH --error=/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/analysis/spangy/logs/slurm_%A_%a.err
-#SBATCH --partition=normal           # replace with your cluster's partition name
 
 # ── Environment ───────────────────────────────────────────────────────────────
 module load userspace/all
