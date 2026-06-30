@@ -41,7 +41,7 @@ def parse_participant_session(filename):
     Derive participant_session label directly from the filename,
     no CSV lookup required.
     """
-    hemisphere = 'left' if filename.endswith('left.surf.gii') else 'right'
+    hemisphere = 'left' if filename.endswith('hemi-L_white.surf.gii') else 'right'
     parts = filename.split('_')
     # e.g. sub-Borgne_ses-01_left.surf.gii  →  sub-Borgne_ses-01_left
     base = parts[0] + '_' + parts[1] if len(parts) >= 2 else parts[0]
@@ -163,7 +163,7 @@ def main():
     try:
         all_files = [
             f for f in os.listdir(SURFACE_PATH)
-            if f.endswith('left.surf.gii') or f.endswith('right.surf.gii')
+            if f.endswith('hemi-L_white.surf.gii') or f.endswith('hemi-R_white.surf.gii')
         ]
         print(f"Found {len(all_files)} surface files in {SURFACE_PATH}")
 
