@@ -9,8 +9,8 @@
 #SBATCH --error=/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/analysis/spangy/logs/slurm_%A_%a.err
 
 # ── Environment ───────────────────────────────────────────────────────────────
-module load userspace/all
-source ~/miniconda3/bin/activate
+module load all
+source ~/.bashrc 
 conda activate babofet
 
 # ── Run ───────────────────────────────────────────────────────────────────────
