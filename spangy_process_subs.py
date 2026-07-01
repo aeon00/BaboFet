@@ -55,6 +55,13 @@ def process_single_file(filename):
 
         participant_session = parse_participant_session(filename)
 
+         # ── Skip if already processed ─────────────────────────────────────────
+        texture_out = os.path.join(TEXTURES_DIR, f'spangy_dom_band_{participant_session}.gii')
+
+        if os.path.exists(texture_out):
+            print(f"  Skipping {participant_session} — already processed.")
+            return None
+
         mesh_file = os.path.join(SURFACE_PATH, filename)
         if not os.path.exists(mesh_file):
             print(f"  Error: file not found: {mesh_file}")
