@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G                    # eigenpairs on large meshes are memory-hungry
-#SBATCH --time=04:00:00
+#SBATCH --time=20:00:00
 #SBATCH --output=/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/analysis/spangy/logs/slurm_%A_%a.out
 #SBATCH --error=/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/analysis/spangy/logs/slurm_%A_%a.err
 
