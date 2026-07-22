@@ -44,8 +44,8 @@ import slam.texture as stex
 CONFIG = {
     "baboon_dir":  "/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/species_comparison/baboon_mesh",
     "human_dir":   "/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/species_comparison/human_mesh/",
-    "baboon_glob": "*.surf.gii",
-    "human_glob":  "*.surf.gii",
+    "baboon_glob": "*.gii",
+    "human_glob":  "*.gii",
 
     "nb_eig":              5000,   # identical for both species; clamped to n_vert-2
     "apply_inertia_transform": True,
