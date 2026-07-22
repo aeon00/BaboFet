@@ -42,8 +42,8 @@ import slam.texture as stex
 # CONFIG  -- edit this block, then run:  python spangy_cross_species.py
 # ----------------------------------------------------------------------------
 CONFIG = {
-    "baboon_dir":  "/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/all_mesh_combined",
-    "human_dir":   "/path/to/human_meshes",
+    "baboon_dir":  "/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/species_comparison/baboon_mesh",
+    "human_dir":   "/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/species_comparison/human_mesh/",
     "baboon_glob": "*.surf.gii",
     "human_glob":  "*.surf.gii",
 
@@ -52,7 +52,7 @@ CONFIG = {
     "curv_zscore_thresh":  3,      # TextureND.z_score_filtering threshold
     "curvature_sign":      1.0,    # SPANGY expects sulci < 0; flip to -1 if inverted
 
-    "out_dir":     "./spangy_cross_species_out",
+    "out_dir":     "/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/species_comparison/results",
 }
 
 TINY = 1e-12  # guard for the near-zero constant eigenvalue
