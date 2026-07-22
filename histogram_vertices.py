@@ -4,11 +4,12 @@ import os
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
 
-directory = '/home/INT/dienye.h/python_files/Babofet/sub-Borgne/all_mesh_combined/'
-analysis_dir = '/home/INT/dienye.h/python_files/Babofet/sub-Borgne/analysis/'
+directory = '/home/INT/dienye.h/python_files/Babofet/sub-Borgne/sub-Borgne-seg/sub-Borgne-hemi/new_hemi_meshes_10_smoothing_iterations/left'
+analysis_dir = directory
 
-vertices_counts = [] 
+vertices_counts = []
 surface_area_values = []
 volume_values = []
 filenames = []
@@ -16,17 +17,21 @@ filenames = []
 mL_in_MM3 = 1000
 CM2_in_MM2 = 100
 
-for filename in os.listdir(directory):
-    if filename.endswith('surf.gii'):
-        mesh_file = os.path.join(directory, filename)
-        mesh = sio.load_mesh(mesh_file)
-        num_vertices = len(mesh.vertices)
-        volume = np.floor(mesh.volume / mL_in_MM3)
-        surface_area = np.floor(mesh.area / CM2_in_MM2)
-        vertices_counts.append(num_vertices)
-        surface_area_values.append(surface_area)
-        volume_values.append(volume)
-        filenames.append(filename)
+# Recursive search, tolerant of naming; tighten the pattern once you confirm it
+mesh_files = sorted(Path(directory).rglob('*.gii'))
+if not mesh_files:
+    raise FileNotFoundError(f"No .gii meshes found under {directory}")
+
+for mesh_file in mesh_files:
+    mesh = sio.load_mesh(str(mesh_file))
+    num_vertices = len(mesh.vertices)
+    volume = np.floor(mesh.volume / mL_in_MM3)
+    surface_area = np.floor(mesh.area / CM2_in_MM2)
+
+    vertices_counts.append(num_vertices)
+    surface_area_values.append(surface_area)
+    volume_values.append(volume)
+    filenames.append(mesh_file.name)
 
 # Create DataFrame
 info_df = pd.DataFrame({
@@ -35,6 +40,10 @@ info_df = pd.DataFrame({
     'Surface Area Values': surface_area_values,
     'Volume Values': volume_values
 })
+
+if info_df.empty:
+    raise ValueError("No meshes were loaded — check the directory and filename filter.")
+
 info_df.to_csv(os.path.join(analysis_dir, 'vertices_surface_area_and_volume.csv'), index=False)
 
 # --- Identify meshes with the highest vertices, volume, and surface area ---
@@ -67,15 +76,14 @@ top_meshes_df.to_csv(os.path.join(analysis_dir, 'top_meshes.csv'), index=False)
 print("Top meshes saved to top_meshes.csv")
 print(top_meshes_df.to_string(index=False))
 
-# ── Plots (unchanged) ────────────────────────────────────────────────────────
+# ── Plots ────────────────────────────────────────────────────────────────────
 
 def plot_histogram(df, column, title, xlabel, save_path):
     sns.set_style("whitegrid")
     plt.figure(figsize=(12, 7))
     sns.histplot(
         data=df, x=column, bins=30,
-        color='#2E86C1', alpha=0.8, kde=True,
-        line_kws={'color': '#E74C3C', 'linewidth': 2}
+        color='#2E86C1', alpha=0.8
     )
     plt.title(title, fontsize=14, pad=15)
     plt.xlabel(xlabel, fontsize=12)
@@ -86,6 +94,6 @@ def plot_histogram(df, column, title, xlabel, save_path):
     plt.savefig(save_path)
     plt.close()
 
-plot_histogram(info_df, 'Number of Vertices',  'Distribution of Vertex Counts Across Meshes',        'Number of Vertices',   os.path.join(analysis_dir, 'distribution_of_vertices.png'))
-plot_histogram(info_df, 'Surface Area Values', 'Distribution of Surface Area Values Across Meshes',  'Surface Area Values',  os.path.join(analysis_dir, 'distribution_of_surface_area.png'))
-plot_histogram(info_df, 'Volume Values',        'Distribution of Volume Values Across Meshes',        'Volume Values',        os.path.join(analysis_dir, 'distribution_of_volume.png'))
+plot_histogram(info_df, 'Number of Vertices',  'Distribution of Vertex Counts Across Meshes',       'Number of Vertices',  os.path.join(analysis_dir, 'distribution_of_vertices.png'))
+plot_histogram(info_df, 'Surface Area Values', 'Distribution of Surface Area Values Across Meshes', 'Surface Area Values', os.path.join(analysis_dir, 'distribution_of_surface_area.png'))
+plot_histogram(info_df, 'Volume Values',       'Distribution of Volume Values Across Meshes',       'Volume Values',       os.path.join(analysis_dir, 'distribution_of_volume.png'))
