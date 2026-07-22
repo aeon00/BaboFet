@@ -15,6 +15,9 @@ BASE_OUT = '/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/sub-
 CURV_PRINC_DIR  = os.path.join(BASE_OUT, 'curvature', 'principal')
 CURV_MEAN_DIR   = '/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/sub-Borgne-seg/sub-Borgne-hemi/mean_curv_analysis/mean_curvature'
 
+os.makedirs(CURV_PRINC_DIR, exist_ok=True)
+os.makedirs(CURV_MEAN_DIR, exist_ok=True)
+
 # ── Mesh source ───────────────────────────────────────────────────────────────
 SURFACE_PATH = '/envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/sub-Borgne-seg/sub-Borgne-hemi/mean_curv_analysis/mesh/'
 
