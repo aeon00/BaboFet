@@ -16,4 +16,4 @@ conda activate babofet
 # ── Run ───────────────────────────────────────────────────────────────────────
 mkdir -p /envau/work/meca/users/dienye.h/python_files/Babofet/sub-Borgne/analysis/spangy/logs
 
-python /envau/work/meca/users/dienye.h/BaboFet/spangy_process_subs.py
+python /envau/work/meca/users/dienye.h/BaboFet/spangy_smoothing_investigation.py
