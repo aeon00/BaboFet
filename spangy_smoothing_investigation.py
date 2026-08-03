@@ -189,7 +189,7 @@ def main():
         else:
             all_files = [
                 f for f in os.listdir(SURFACE_PATH)
-                if f.endswith('hemi-L_white.surf.gii') or f.endswith('hemi-R_white.surf.gii')
+                if f.endswith('left_wm.gii') or f.endswith('right_wm.gii')
             ]
         print(f"Found {len(all_files)} surface file(s); "
               f"smoothing levels = {SMOOTHING_ITERS}")
