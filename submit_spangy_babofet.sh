@@ -5,12 +5,14 @@
 
 set -euo pipefail
 
-BASE=/envau/work/meca/users/dienye.h/python_files/Babofet
-mkdir -p "$BASE/logs"
+REPO=/envau/work/meca/users/dienye.h/BaboFet
+DATA=/envau/work/meca/users/dienye.h/python_files/Babofet
 
-ARRAY_ID=$(sbatch --parsable "$BASE/run_spangy_babofet.sh" "$@")
+mkdir -p "$DATA/logs"
+
+ARRAY_ID=$(sbatch --parsable "$REPO/run_spangy_babofet.sh" "$@")
 echo "Array job submitted: $ARRAY_ID"
 
 MERGE_ID=$(sbatch --parsable --dependency=afterany:"$ARRAY_ID" \
-                  "$BASE/merge_spangy_babofet.sh" "$@")
+                  "$REPO/merge_spangy_babofet.sh" "$@")
 echo "Merge job submitted:  $MERGE_ID (runs after $ARRAY_ID)"

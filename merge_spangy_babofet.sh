@@ -8,12 +8,15 @@
 
 set -euo pipefail
 
-SCRIPT=/envau/work/meca/users/dienye.h/python_files/Babofet/spangy_babofet_all_subjects.py
+REPO=/envau/work/meca/users/dienye.h/BaboFet
+SCRIPT="$REPO/spangy_babofet_all_subjects.py"
 
 module purge
 module load all
 source ~/.bashrc
 conda activate slam
+
+cd "$REPO"
 
 if [ "$#" -gt 0 ]; then
     python -u "$SCRIPT" --merge --subjects "$@"

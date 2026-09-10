@@ -7,6 +7,8 @@
 #SBATCH --output=/envau/work/meca/users/dienye.h/python_files/Babofet/logs/spangy_%A_%a.out
 #SBATCH --error=/envau/work/meca/users/dienye.h/python_files/Babofet/logs/spangy_%A_%a.err
 
+# Code lives in the git repo; data and logs stay in the working tree.
+#
 # Usage:
 #   mkdir -p /envau/work/meca/users/dienye.h/python_files/Babofet/logs
 #   sbatch run_spangy_babofet.sh                       # all subjects
@@ -18,9 +20,10 @@
 
 set -euo pipefail
 
-SCRIPT=/envau/work/meca/users/dienye.h/python_files/Babofet/spangy_babofet_all_subjects.py
+REPO=/envau/work/meca/users/dienye.h/BaboFet
+SCRIPT="$REPO/spangy_babofet_all_subjects.py"
 
-# Environment — this order matters on the cluster
+# Environment - this order matters on the cluster
 module purge
 module load all
 source ~/.bashrc
@@ -30,7 +33,10 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-4}
 export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK:-4}
 export MPLBACKEND=Agg
 
+cd "$REPO"
+
 echo "Host: $(hostname)"
+echo "Repo: $REPO  (commit $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'n/a'))"
 echo "Array job ${SLURM_ARRAY_JOB_ID}, task ${SLURM_ARRAY_TASK_ID} of ${SLURM_ARRAY_TASK_COUNT:-?}"
 echo "Started: $(date)"
 
