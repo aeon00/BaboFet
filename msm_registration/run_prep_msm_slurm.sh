@@ -70,8 +70,7 @@ if [[ "$mode" == check ]]; then
 fi
 
 if [[ "$mode" == task ]]; then
-    source "$CODE_DIR/env_setup.sh"
-    export PYTHON=$(command -v python3)
+    source "$CODE_DIR/env_setup.sh"   # also exports PYTHON (the babofet env's python)
     line=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$JOBLIST")
     read -r IN HEMI OUT PREFIX <<< "$line"
     bash "$CODE_DIR/prep_msm_surface.sh" "$IN" "$HEMI" "$OUT" "$PREFIX"

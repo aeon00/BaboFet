@@ -36,12 +36,21 @@ if [ "${NEED_FREESURFER:-1}" = 1 ]; then
     fi
 fi
 
+# FSL setup (defines FSLDIR and puts msm on PATH if the module does not do it).
+# Done BEFORE conda activation: FSL ships its own python3, and the conda env
+# must come first on PATH so its python (with slam) is the one used.
+if [ -n "${FSLDIR:-}" ] && [ -f "$FSLDIR/etc/fslconf/fsl.sh" ]; then
+    source "$FSLDIR/etc/fslconf/fsl.sh"
+fi
+
 source ~/.bashrc
 conda activate "${CONDA_ENV:-babofet}"
 
-# FSL setup (defines FSLDIR and puts msm on PATH if the module does not do it)
-if [ -n "${FSLDIR:-}" ] && [ -f "$FSLDIR/etc/fslconf/fsl.sh" ]; then
-    source "$FSLDIR/etc/fslconf/fsl.sh"
+# Use the conda env's python explicitly, whatever else is on PATH.
+if [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python" ]; then
+    export PYTHON="$CONDA_PREFIX/bin/python"
+else
+    export PYTHON=$(command -v python3)
 fi
 
 # FreeSurfer license: use FS_LICENSE if set, otherwise look in the usual places.
@@ -58,7 +67,8 @@ unset _had_u _had_e
 
 # ---- report what was found, fail early with a clear message -----------------
 _missing=0
-_tools="wb_command python3"
+echo "[env] python -> $PYTHON"
+_tools="wb_command"
 [ "${NEED_FREESURFER:-1}" = 1 ] && _tools="$_tools mris_convert mris_smooth mris_inflate mris_sphere"
 [ "${NEED_MSM:-0}" = 1 ] && _tools="$_tools msm"
 for t in $_tools; do
@@ -69,8 +79,14 @@ if [ "${NEED_FREESURFER:-1}" = 1 ]; then
     if [ -n "${FS_LICENSE:-}" ] && [ -f "$FS_LICENSE" ]; then echo "[env] FS_LICENSE -> $FS_LICENSE"
     else echo "[env] MISSING: FreeSurfer license (export FS_LICENSE=/path/to/license.txt)" >&2; _missing=1; fi
 fi
-python3 -c "import nibabel, slam" 2>/dev/null && echo "[env] python: nibabel + slam OK" \
-    || { echo "[env] MISSING: nibabel/slam in conda env ${CONDA_ENV:-babofet}" >&2; _missing=1; }
+if _err=$("$PYTHON" -c "import nibabel, slam.io, slam.differential_geometry" 2>&1); then
+    echo "[env] python: nibabel + slam OK"
+else
+    echo "[env] MISSING: nibabel/slam in $PYTHON" >&2
+    echo "$_err" | tail -3 >&2
+    _missing=1
+fi
+unset _err
 if [ $_missing = 1 ]; then
     echo "[env] Environment incomplete — see messages above." >&2
     return 1 2>/dev/null || exit 1
