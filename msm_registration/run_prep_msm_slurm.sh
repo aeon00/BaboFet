@@ -2,6 +2,8 @@
 # =============================================================================
 # run_prep_msm_slurm.sh — run prep_msm_surface.sh over all baboon surfaces.
 #
+# Step 0 (login node): check modules, FreeSurfer, license and conda env
+#     bash run_prep_msm_slurm.sh check
 # Step 1 (login node): build the job list
 #     bash run_prep_msm_slurm.sh list
 # Step 2: submit one array task per surface
@@ -19,13 +21,13 @@ LEFT_REGEX='_hemi_left_'                        # how the left hemisphere is nam
 RIGHT_REGEX='_hemi_right_'                      # how the right hemisphere is named
 EXCLUDE_REGEX='(inflated|sphere|pial)'          # skip derived surfaces
 OUT_ROOT=/envau/work/meca/users/dienye.h/python_files/Babofet/msm_inputs
-CODE_DIR=/envau/work/meca/users/dienye.h/BaboFet/msm_prep
+CODE_DIR=/envau/work/meca/users/dienye.h/BaboFet/msm_registration
 JOBLIST=$OUT_ROOT/joblist.txt
 LOGDIR=$OUT_ROOT/logs
-MODULES="freesurfer workbench"                  # names on your cluster
-# Python env with slam + nibabel. conda in a batch job needs conda.sh sourced first.
-# If babofet is a venv instead: PY_ACTIVATE="source /path/to/babofet/bin/activate"
-PY_ACTIVATE='source "$(conda info --base)/etc/profile.d/conda.sh" && conda activate babofet'
+# Modules, conda env (babofet) and FreeSurfer license are set up by env_setup.sh.
+# FreeSurfer module name: set FS_MODULE (from `module avail 2>&1 | grep -i free`).
+export FS_MODULE=${FS_MODULE:-freesurfer/7.4.1}
+export CONDA_ENV=${CONDA_ENV:-babofet}
 export COMPUTE_DPFSTAR=1 DPF_ALPHA=500 DPF_ADAPTATION=volume_hull
 # -----------------------------------------------------------------------------
 
@@ -61,17 +63,20 @@ if [[ "$mode" == submit ]]; then
     exit 0
 fi
 
+if [[ "$mode" == check ]]; then
+    # Run on a login/interactive node to test the environment before submitting.
+    source "$CODE_DIR/env_setup.sh" && echo "Environment OK"
+    exit $?
+fi
+
 if [[ "$mode" == task ]]; then
-    # shellcheck disable=SC2086
-    module load $MODULES 2>/dev/null || true
-    if [[ -n "$PY_ACTIVATE" ]]; then set +u; eval "$PY_ACTIVATE"; set -u; fi
+    source "$CODE_DIR/env_setup.sh"
     export PYTHON=$(command -v python3)
-    : "${FS_LICENSE:?Set FS_LICENSE to your FreeSurfer license file}"
     line=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$JOBLIST")
     read -r IN HEMI OUT PREFIX <<< "$line"
     bash "$CODE_DIR/prep_msm_surface.sh" "$IN" "$HEMI" "$OUT" "$PREFIX"
     exit 0
 fi
 
-echo "Usage: $0 {list|submit}" >&2
+echo "Usage: $0 {check|list|submit}" >&2
 exit 1

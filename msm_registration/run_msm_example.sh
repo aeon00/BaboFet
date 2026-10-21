@@ -12,6 +12,10 @@ TEXTURE=${TEXTURE:-sulc}                       # sulc | dpfstar
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CONF=${CONF:-$SCRIPT_DIR/msm_baboon_pairwise.conf}
 
+# MSM needs FSL (msm) + Workbench, not FreeSurfer
+export NEED_FREESURFER=0 NEED_MSM=1
+source "$SCRIPT_DIR/env_setup.sh"
+
 D=/envau/work/meca/users/dienye.h/python_files/Babofet/msm_inputs/sub-Borgne
 IN=$D/ses-01/sub-Borgne_ses-01_hemi-L
 REF=$D/ses-02/sub-Borgne_ses-02_hemi-L
