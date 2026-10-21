@@ -83,11 +83,16 @@ def main():
     if euler != 2:
         failures.append(f"surface is not genus-0 (Euler = {euler})")
 
-    centre = sph_xyz.mean(axis=0)
-    radius = np.linalg.norm(sph_xyz - centre, axis=1)
-    print(f"sphere       centre=({centre[0]:.3f}, {centre[1]:.3f}, {centre[2]:.3f})  "
-          f"radius min={radius.min():.3f} max={radius.max():.3f}")
-    if np.linalg.norm(centre) > 1.0 or abs(radius.mean() - 100) > 1.0:
+    # Centre from a least-squares sphere fit, NOT the vertex mean: mris_sphere
+    # leaves vertices unevenly spread, so the mean is offset from the true centre
+    # even for a perfectly centred sphere.
+    A = np.c_[2 * sph_xyz, np.ones(len(sph_xyz))]
+    sol = np.linalg.lstsq(A, (sph_xyz ** 2).sum(axis=1), rcond=None)[0]
+    centre = sol[:3]
+    radius = np.linalg.norm(sph_xyz, axis=1)          # distance from the origin
+    print(f"sphere       fitted centre=({centre[0]:.3f}, {centre[1]:.3f}, {centre[2]:.3f})  "
+          f"|v| min={radius.min():.3f} max={radius.max():.3f}")
+    if np.linalg.norm(centre) > 1.0 or np.abs(radius - 100).max() > 1.0:
         failures.append("sphere not centred at origin with radius 100")
 
     n_flip = flipped_triangles(sph_xyz, sph_tri)
