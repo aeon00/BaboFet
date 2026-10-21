@@ -66,29 +66,48 @@ log() { echo "[$(date +%H:%M:%S)] [$PREFIX] $*"; }
 # ---- 1. GIFTI -> FreeSurfer surface -----------------------------------------
 # FreeSurfer derives the hemisphere (and the sulc file name) from the "lh."/"rh."
 # prefix, so the working files are named lh.* / rh.*.
-log "Converting to FreeSurfer format"
-mris_convert "$IN" "$WORK/$FSH.white"
+# Resume: if a previous run already got through mris_sphere, reuse its outputs
+# (set REDO_FS=1 to force recomputation).
+if [[ "${REDO_FS:-0}" != 1 && -s "$WORK/$FSH.sphere" && -s "$WORK/$FSH.sulc" \
+      && -s "$WORK/$FSH.inflated" && -s "$WORK/$FSH.white" ]]; then
+    log "Reusing existing FreeSurfer outputs in $WORK (steps 1-4 skipped)"
+else
+    log "Converting to FreeSurfer format"
+    mris_convert "$IN" "$WORK/$FSH.white"
 
-# ---- 2. Light smoothing (as recon-all does before inflation) -----------------
-log "Smoothing ($SMOOTH_ITERS iterations)"
-mris_smooth -n "$SMOOTH_ITERS" -nw -seed "$SEED" "$WORK/$FSH.white" "$WORK/$FSH.smoothwm"
+    # ---- 2. Light smoothing (as recon-all does before inflation) -------------
+    log "Smoothing ($SMOOTH_ITERS iterations)"
+    mris_smooth -n "$SMOOTH_ITERS" -nw -seed "$SEED" "$WORK/$FSH.white" "$WORK/$FSH.smoothwm"
 
-# ---- 3. Inflation (also writes <hemi>.sulc next to the output) --------------
-log "Inflating"
-( cd "$WORK" && mris_inflate "$FSH.smoothwm" "$FSH.inflated" )
-[[ -f "$WORK/$FSH.sulc" ]] || { echo "mris_inflate did not produce $FSH.sulc" >&2; exit 1; }
+    # ---- 3. Inflation (also writes <hemi>.sulc next to the output) ----------
+    log "Inflating"
+    ( cd "$WORK" && mris_inflate "$FSH.smoothwm" "$FSH.inflated" )
+    [[ -f "$WORK/$FSH.sulc" ]] || { echo "mris_inflate did not produce $FSH.sulc" >&2; exit 1; }
 
-# ---- 4. Spherical mapping ----------------------------------------------------
-log "Mapping to sphere (this is the slow step)"
-SPH_OPTS=(-seed "$SEED")
-[[ "$SPHERE_QUICK" == 1 ]] && SPH_OPTS+=(-q)
-( cd "$WORK" && mris_sphere "${SPH_OPTS[@]}" "$FSH.inflated" "$FSH.sphere" )
+    # ---- 4. Spherical mapping ------------------------------------------------
+    log "Mapping to sphere (this is the slow step)"
+    SPH_OPTS=(-seed "$SEED")
+    [[ "$SPHERE_QUICK" == 1 ]] && SPH_OPTS+=(-q)
+    ( cd "$WORK" && mris_sphere "${SPH_OPTS[@]}" "$FSH.inflated" "$FSH.sphere" )
+fi
 
 # ---- 5. Back to GIFTI --------------------------------------------------------
 log "Converting outputs to GIFTI"
 mris_convert "$WORK/$FSH.inflated" "$OUT/$PREFIX.inflated.surf.gii"
 mris_convert "$WORK/$FSH.sphere"   "$WORK/$PREFIX.sphere_raw.surf.gii"
-mris_convert -c "$WORK/$FSH.sulc" "$WORK/$FSH.white" "$OUT/$PREFIX.sulc.func.gii"
+# sulc: converted with nibabel, not `mris_convert -c` (which prepends "lh."/"rh."
+# to the output file name). Values are written in vertex order, as FreeSurfer stores them.
+"$PYTHON" - "$WORK/$FSH.sulc" "$OUT/$PREFIX.sulc.func.gii" <<'EOF'
+import sys
+import nibabel as nib
+import numpy as np
+values = nib.freesurfer.read_morph_data(sys.argv[1]).astype(np.float32)
+nib.save(nib.gifti.GiftiImage(darrays=[nib.gifti.GiftiDataArray(
+    values, intent="NIFTI_INTENT_SHAPE", datatype="NIFTI_TYPE_FLOAT32")]), sys.argv[2])
+print(f"sulc: {values.size} values written to {sys.argv[2]}")
+EOF
+# remove a misnamed file left by an earlier version of this script, if any
+rm -f "$OUT/$FSH.$PREFIX.sulc.func.gii"
 
 # Anatomical surface for MSM strain regularisation = the original input
 # (same vertices/order as the sphere; mris_convert preserves vertex order).
