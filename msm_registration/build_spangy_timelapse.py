@@ -14,8 +14,11 @@ Per animal/hemisphere the .npz holds:
 Usage (cluster, after `source env_setup.sh` with NEED_FREESURFER=0):
   python build_spangy_timelapse.py                 # all animals, dominant-band maps
   python build_spangy_timelapse.py --sub sub-Fabienne
-Default --pattern (local dominant band, level 0.45):
-  <BASE>/{sub}/analysis/spangy/textures/spangy_dom_band_{sub}_{ses}_hemi_hemi-{hemiword}_level_0.45.gii
+Default --pattern (local dominant band from spangy_babofet_pymesh.py, i.e. SPANGY
+run on the same Pymesh meshes that were registered):
+  <BASE>/{sub}/analysis/spangy_pymesh/textures/spangy_dom_band_{sub}_{ses}_hemi-{hemi}.gii
+Older textures (other meshes):
+  --pattern "<BASE>/{sub}/analysis/spangy/textures/spangy_dom_band_{sub}_{ses}_hemi_hemi-{hemiword}_level_0.45.gii"
 Placeholders in --pattern: {sub} {ses} {hemi} (L/R) {hemiword} (left/right).
 --kind label       categorical maps (local dominant band): nearest-weight resampling
 --kind continuous  numeric maps (band power, curvature...): area-weighted resampling
@@ -53,8 +56,8 @@ def load_metric(path):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--pattern", help="path pattern of the SPANGY texture",
-                   default=f"{BASE}/{{sub}}/analysis/spangy/textures/"
-                           "spangy_dom_band_{sub}_{ses}_hemi_hemi-{hemiword}_level_0.45.gii")
+                   default=f"{BASE}/{{sub}}/analysis/spangy_pymesh/textures/"
+                           "spangy_dom_band_{sub}_{ses}_hemi-{hemi}.gii")
     p.add_argument("--kind", choices=["label", "continuous"], default="label")
     p.add_argument("--texture", default="sulc", help="which registrations were chained")
     p.add_argument("--sub", default="sub-*")

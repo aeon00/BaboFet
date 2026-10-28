@@ -9,8 +9,14 @@ view time: everything is already on the reference mesh.
   python view_spangy_timelapse.py FILE.npz --same-size           # morph shape only, no growth
   python view_spangy_timelapse.py FILE.npz --export aziza_L.mp4  # write a movie, no window
 
-Controls: slider = time (between sessions too), space = play/pause,
-          left/right arrows = previous/next session.
+The movie starts playing as soon as the window opens (--paused to start stopped).
+Controls: mouse = rotate / zoom / pan at any time, even while playing
+          space or the play button (bottom left) = play/pause
+          slider = time (between sessions too)
+          left/right arrows = previous/next session (also pauses)
+          up/down arrows = faster/slower
+          b = bands shown: both -> sulcal only -> gyral only
+          l = loop on/off,  r = reset the view
 Geometry: "morph" (default) shows each session's own anatomy, blended between
 sessions, so you see the brain grow and fold while the bands change.
 """
@@ -25,13 +31,22 @@ LOW_BAND = (0.80, 0.80, 0.80)      # bands below B3
 SULCAL_SHADE = 0.55                # sulcal vertices (negative labels) drawn darker
 
 
-def band_rgb(labels, signed=True):
-    """SPANGY local dominant band (signed: <0 sulci, >0 gyri) -> RGB per vertex."""
+HIDDEN = (0.96, 0.96, 0.96)        # vertices of the class not being shown
+SHOW_MODES = ["both", "sulcal", "gyral"]
+
+
+def band_rgb(labels, signed=True, show="both"):
+    """SPANGY local dominant band (signed: <0 sulci, >0 gyri) -> RGB per vertex.
+    show: "both", "sulcal" (only negative labels coloured) or "gyral" (only positive)."""
     lab = np.rint(labels).astype(int)
     rgb = np.tile(np.array(LOW_BAND, np.float32), (lab.size, 1))
     for band, colour in BAND_COLOURS.items():
         rgb[np.abs(lab) == band] = colour
-    if signed:
+    if show == "sulcal":
+        rgb[lab >= 0] = HIDDEN
+    elif show == "gyral":
+        rgb[lab <= 0] = HIDDEN
+    elif signed:
         rgb[lab < 0] *= SULCAL_SHADE
     return rgb
 
@@ -58,6 +73,9 @@ def main():
     p.add_argument("--column", type=int, default=0, help="texture column (multi-column maps)")
     p.add_argument("--unsigned", action="store_true", help="ignore sulcal/gyral sign")
     p.add_argument("--speed", type=float, default=0.05, help="sessions per frame when playing")
+    p.add_argument("--paused", action="store_true", help="open without playing")
+    p.add_argument("--show", choices=SHOW_MODES, default="both",
+                   help="bands to colour: both, sulcal only, gyral only (key B cycles)")
     p.add_argument("--export", help="write a movie (.mp4 or .gif) instead of opening a window")
     p.add_argument("--fps", type=int, default=20)
     args = p.parse_args()
@@ -80,7 +98,7 @@ def main():
     mesh = pv.PolyData(xyz, np.c_[np.full(len(faces), 3), faces].ravel())
     pl = pv.Plotter(off_screen=bool(args.export), window_size=(1200, 900))
     if kind == "label":
-        mesh.point_data["rgb"] = band_rgb(val, not args.unsigned)
+        mesh.point_data["rgb"] = band_rgb(val, not args.unsigned, args.show)
         pl.add_mesh(mesh, scalars="rgb", rgb=True, smooth_shading=True)
         legend = [[f"B{b}", c] for b, c in BAND_COLOURS.items()] + [["< B3", LOW_BAND]]
         if not args.unsigned:
@@ -98,19 +116,23 @@ def main():
     big = np.abs(coords - coords.mean(axis=1, keepdims=True)).max()
     pl.reset_camera(bounds=(-big, big, -big, big, -big, big))
 
-    state = {"t": 0.0, "playing": False}
+    state = {"t": 0.0, "playing": not args.paused, "speed": args.speed, "loop": True,
+             "show": args.show}
 
     def show(t):
         state["t"] = float(np.clip(t, 0, n - 1))
         xyz, val = frame_at(state["t"], coords, values, kind, args.same_size, ref_scale)
         mesh.points = xyz
         if kind == "label":
-            mesh.point_data["rgb"][:] = band_rgb(val, not args.unsigned)
+            mesh.point_data["rgb"][:] = band_rgb(val, not args.unsigned, state["show"])
         else:
             mesh.point_data["value"][:] = val
         k = int(round(state["t"]))
         pl.add_text(f"{sessions[k]}   ({k + 1}/{n})", position="lower_left",
                     font_size=14, name="session")
+        if kind == "label":
+            pl.add_text(f"bands: {state['show']}", position="lower_right", font_size=12,
+                        name="showmode")
         pl.render()
 
     if args.export:
@@ -129,27 +151,66 @@ def main():
     slider = pl.add_slider_widget(show, [0, n - 1], value=0, title="session",
                                   pointa=(0.25, 0.08), pointb=(0.75, 0.08), fmt="%.2f")
 
-    def tick(_step=None):
-        if state["playing"]:
-            t = state["t"] + args.speed
-            if t > n - 1:
-                t = 0.0
-            slider.GetRepresentation().SetValue(t)
-            show(t)
+    def set_playing(on):
+        state["playing"] = bool(on)
+        button.GetRepresentation().SetState(int(state["playing"]))
+        pl.add_text("playing" if on else "paused", position=(70, 22), font_size=10,
+                    name="playstate")
+        pl.render()
 
-    def toggle():
-        state["playing"] = not state["playing"]
+    def tick(_step=None):
+        if not state["playing"]:
+            return
+        t = state["t"] + state["speed"]
+        if t > n - 1:
+            if state["loop"]:
+                t = 0.0
+            else:
+                t = n - 1; set_playing(False)
+        slider.GetRepresentation().SetValue(t)
+        show(t)
 
     def step(delta):
+        set_playing(False)
         t = round(state["t"]) + delta
         slider.GetRepresentation().SetValue(np.clip(t, 0, n - 1))
         show(t)
 
-    pl.add_key_event("space", toggle)
+    def speed(factor):
+        state["speed"] = float(np.clip(state["speed"] * factor, 0.005, 0.5))
+        pl.add_text(f"speed {state['speed']:.3f} sessions/frame", position="upper_right",
+                    font_size=10, name="speed")
+        pl.render()
+
+    def toggle_loop():
+        state["loop"] = not state["loop"]
+        pl.add_text(f"loop {'on' if state['loop'] else 'off'}", position="upper_right",
+                    font_size=10, name="speed")
+        pl.render()
+
+    # clickable play/pause button (bottom left); dragging the slider pauses playback
+    button = pl.add_checkbox_button_widget(set_playing, value=state["playing"],
+                                           position=(15, 15), size=40,
+                                           color_on="green", color_off="grey")
+    slider.AddObserver("StartInteractionEvent", lambda *_: set_playing(False))
+
+    pl.add_key_event("space", lambda: set_playing(not state["playing"]))
     pl.add_key_event("Right", lambda: step(+1))
     pl.add_key_event("Left", lambda: step(-1))
+    pl.add_key_event("Up", lambda: speed(1.5))
+    pl.add_key_event("Down", lambda: speed(1 / 1.5))
+    pl.add_key_event("l", toggle_loop)
+
+    def cycle_show():
+        state["show"] = SHOW_MODES[(SHOW_MODES.index(state["show"]) + 1) % len(SHOW_MODES)]
+        show(state["t"])
+
+    if kind == "label":
+        pl.add_key_event("b", cycle_show)
+    # 'r' resets the camera in VTK by default; the 3D view itself stays mouse-controlled
     pl.add_timer_event(max_steps=10_000_000, duration=50, callback=tick)
     show(0.0)
+    set_playing(state["playing"])
     pl.show()
 
 
