@@ -59,7 +59,10 @@ def main():
     p.add_argument("--texture", default="sulc", help="which registrations were chained")
     p.add_argument("--sub", default="sub-*")
     p.add_argument("--name", default=None, help="tag in output file name (default: kind)")
+    p.add_argument("--check", action="store_true",
+                   help="only check that every texture matches its mesh; write nothing")
     args = p.parse_args()
+    n_bad = 0
 
     chain_root = f"{BASE}/msm_chained/{args.texture}"
     in_root = f"{BASE}/msm_inputs"
@@ -88,6 +91,22 @@ def main():
                 if not os.path.isfile(tex):
                     print(f"  [{sub} {hemi} {ses}] no texture at {tex} -> skipped")
                     continue
+                # the texture must be defined on the same mesh that was registered
+                n_tex, n_mesh = load_metric(tex).shape[0], load_surf(anat)[0].shape[0]
+                if n_tex != n_mesh:
+                    other = "R" if hemi == "L" else "L"
+                    o_anat = f"{in_root}/{sub}/{ses}/{sub}_{ses}_hemi-{other}.anat.surf.gii"
+                    n_other = load_surf(o_anat)[0].shape[0] if os.path.isfile(o_anat) else None
+                    hint = (f"; matches the hemi-{other} mesh ({n_other}) -> left/right swapped?"
+                            if n_tex == n_other else "; matches neither hemisphere -> "
+                            "SPANGY was run on a different mesh")
+                    print(f"  [{sub} {hemi} {ses}] MISMATCH: texture {n_tex} vertices, "
+                          f"registered mesh {n_mesh}{hint} -> skipped")
+                    n_bad += 1
+                    continue
+                if args.check:
+                    print(f"  [{sub} {hemi} {ses}] ok ({n_mesh} vertices)")
+                    continue
                 t_out, s_out = f"{tmp}/{ses}.func.gii", f"{tmp}/{ses}.surf.gii"
                 if args.kind == "label":   # keep band numbers whole: no averaging
                     wb("-metric-resample", tex, sph, ref_sphere, "BARYCENTRIC", t_out, "-largest")
@@ -99,6 +118,8 @@ def main():
                 values.append(load_metric(t_out))
                 coords.append(load_surf(s_out)[0])
 
+        if args.check:
+            continue
         if len(sessions) < 2:
             print(f"[{sub} hemi-{hemi}] fewer than 2 sessions with textures, skipped")
             continue
@@ -107,6 +128,9 @@ def main():
                             sessions=np.array(sessions), ref=ref, sub=sub, hemi=hemi,
                             kind=args.kind)
         print(f"[{sub} hemi-{hemi}] {len(sessions)} sessions -> {out}")
+
+    if n_bad:
+        print(f"---- {n_bad} session(s) skipped because the texture does not match the mesh")
 
 
 if __name__ == "__main__":
