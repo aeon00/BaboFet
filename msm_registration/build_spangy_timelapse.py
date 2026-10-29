@@ -75,8 +75,8 @@ def main():
                    help="also keep the resampled textures/surfaces as GIFTI in spangy_on_ref/")
     args = p.parse_args()
     n_bad = 0
-    if args.onref and args.name is None:
-        args.name = f"{args.kind}_onref"
+    if args.name is None:
+        args.name = f"{args.kind}_{args.texture}" + ("_onref" if args.onref else "")
 
     chain_root = f"{BASE}/msm_chained/{args.texture}"
     in_root = f"{BASE}/msm_inputs"
@@ -105,9 +105,9 @@ def main():
                 if args.onref:
                     # SPANGY already ran on the surface resampled onto the reference
                     # mesh: texture and surface are used as they are, no resampling.
-                    surf = (f"{BASE}/surfaces_on_ref/{sub}/hemi-{hemi}/"
+                    surf = (f"{BASE}/surfaces_on_ref/{args.texture}/{sub}/hemi-{hemi}/"
                             f"{sub}_{ses}_hemi-{hemi}_on_{ref}.anat.surf.gii")
-                    tex = (f"{BASE}/{sub}/analysis/spangy_onref/textures/"
+                    tex = (f"{BASE}/{sub}/analysis/spangy_onref_{args.texture}/textures/"
                            f"spangy_dom_band_{sub}_{ses}_hemi-{hemi}.gii")
                     missing = [f for f in (surf, tex) if not os.path.isfile(f)]
                     if missing:
@@ -151,7 +151,7 @@ def main():
                        "-area-surfs", anat, ref_anat)
                 wb("-surface-resample", anat, sph, ref_sphere, "BARYCENTRIC", s_out)
                 if args.save_gii:
-                    gdir = f"{BASE}/spangy_on_ref/{sub}/hemi-{hemi}"
+                    gdir = f"{BASE}/spangy_on_ref/{args.texture}/{sub}/hemi-{hemi}"
                     os.makedirs(gdir, exist_ok=True)
                     stem = f"{gdir}/{sub}_{ses}_hemi-{hemi}_on_{ref}"
                     struct = "CORTEX_LEFT" if hemi == "L" else "CORTEX_RIGHT"

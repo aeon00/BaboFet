@@ -14,7 +14,7 @@ Usage (cluster, after `export NEED_FREESURFER=0; source env_setup.sh`):
     $PYTHON resample_to_ref.py --texture dpfstar   # use the DPF-star chain instead
 
 Output:
-    <BASE>/surfaces_on_ref/<sub>/hemi-<H>/
+    <BASE>/surfaces_on_ref/<texture>/<sub>/hemi-<H>/
         <sub>_<ses>_hemi-<H>_on_<ref>.anat.surf.gii
         <sub>_hemi-<H>_resample_qc.txt
 The QC table compares each resampled surface with the original one:
@@ -66,7 +66,7 @@ def main():
 
     chain_root = f"{BASE}/msm_chained/{args.texture}"
     in_root = f"{BASE}/msm_inputs"
-    out_root = f"{BASE}/surfaces_on_ref"
+    out_root = f"{BASE}/surfaces_on_ref/{args.texture}"   # sulc and dpfstar kept apart
 
     for hdir in sorted(glob.glob(f"{chain_root}/{args.sub}/hemi-*")):
         sub = os.path.basename(os.path.dirname(hdir))

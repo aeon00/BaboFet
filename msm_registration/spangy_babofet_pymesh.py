@@ -34,8 +34,9 @@ Usage:
     python spangy_babofet_pymesh.py --merge         # per-subject + pooled CSVs
     python spangy_babofet_pymesh.py --subjects sub-Aziza sub-Borgne
     python spangy_babofet_pymesh.py --list          # dry run: show work plan
-    python spangy_babofet_pymesh.py --onref         # run on surfaces_on_ref/ instead
-                                                    # (outputs in analysis/spangy_onref/)
+    python spangy_babofet_pymesh.py --onref         # run on surfaces_on_ref/sulc/ instead
+                                                    # (outputs in analysis/spangy_onref_sulc/)
+    python spangy_babofet_pymesh.py --onref --reg-texture dpfstar   # DPF-star registrations
 """
 
 import argparse
@@ -72,10 +73,11 @@ MESH_RELGLOB = os.path.join('ses-*', 'anat', '*_hemi_*_wm.gii')
 
 # --onref: surfaces already resampled onto each animal's reference mesh
 # (resample_to_ref.py). Outputs then share one vertex numbering per animal/hemisphere.
-ONREF_MESH_ROOT = os.path.join(DATA_ROOT, 'surfaces_on_ref')
+# '{reg}' = which registrations were used: sulc or dpfstar (--reg-texture)
+ONREF_MESH_ROOT = os.path.join(DATA_ROOT, 'surfaces_on_ref', '{reg}')
 ONREF_RELGLOB = os.path.join('hemi-*', '*_on_ses-*.anat.surf.gii')
-ONREF_OUT_SUBDIR = os.path.join('analysis', 'spangy_onref')
-ONREF_POOLED_NAME = 'all_subjects_spangy_onref_results.csv'
+ONREF_OUT_SUBDIR = os.path.join('analysis', 'spangy_onref_{reg}')
+ONREF_POOLED_NAME = 'all_subjects_spangy_onref_{reg}_results.csv'
 
 # Subject folders matching any of these substrings are ignored (case-insensitive).
 DEFAULT_EXCLUDE = ['(old)', '_old', '.old', 'backup']
@@ -354,14 +356,19 @@ def main():
                     help='Recompute even if outputs already exist')
     ap.add_argument('--onref', action='store_true',
                     help='Run on the surfaces resampled onto each animal\'s reference mesh '
-                         '(surfaces_on_ref/), writing to analysis/spangy_onref/')
+                         '(surfaces_on_ref/<reg>/), writing to analysis/spangy_onref_<reg>/')
+    ap.add_argument('--reg-texture', choices=['sulc', 'dpfstar'], default='sulc',
+                    help='With --onref: surfaces from the sulc- or DPF-star-driven registrations')
     args = ap.parse_args()
 
     global MESH_RELGLOB, OUT_SUBDIR, POOLED_NAME
     if args.onref:
-        MESH_RELGLOB, OUT_SUBDIR, POOLED_NAME = ONREF_RELGLOB, ONREF_OUT_SUBDIR, ONREF_POOLED_NAME
+        reg = args.reg_texture
+        MESH_RELGLOB = ONREF_RELGLOB
+        OUT_SUBDIR = ONREF_OUT_SUBDIR.format(reg=reg)
+        POOLED_NAME = ONREF_POOLED_NAME.format(reg=reg)
         if args.mesh_root == MESH_ROOT:
-            args.mesh_root = ONREF_MESH_ROOT
+            args.mesh_root = ONREF_MESH_ROOT.format(reg=reg)
         print(f"On-reference mode: meshes from {args.mesh_root}, outputs in <sub>/{OUT_SUBDIR}")
 
     if args.merge:
