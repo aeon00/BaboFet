@@ -14,6 +14,7 @@
 #   mkdir -p /envau/work/meca/users/dienye.h/python_files/Babofet/logs
 #   sbatch run_spangy_pymesh.sh                        # all subjects
 #   sbatch run_spangy_pymesh.sh sub-Aziza sub-Borgne   # subset
+#   sbatch --export=ALL,SPANGY_ARGS=--onref run_spangy_pymesh.sh   # surfaces on reference mesh
 #
 # Then, once the array finishes, build the per-subject + pooled CSVs:
 #   sbatch --dependency=afterany:<JOBID> --wrap \
@@ -42,10 +43,15 @@ echo "Python: $(command -v python)"
 echo "Array job ${SLURM_ARRAY_JOB_ID}, task ${SLURM_ARRAY_TASK_ID} of ${SLURM_ARRAY_TASK_COUNT:-?}"
 echo "Started: $(date)"
 
+# Extra options for the python script, e.g. SPANGY_ARGS=--onref:
+#   sbatch --export=ALL,SPANGY_ARGS=--onref run_spangy_pymesh.sh
+SPANGY_ARGS=${SPANGY_ARGS:-}
+echo "Options: ${SPANGY_ARGS:-none}"
+
 if [ "$#" -gt 0 ]; then
-    python -u "$SCRIPT" --subjects "$@"
+    python -u "$SCRIPT" $SPANGY_ARGS --subjects "$@"
 else
-    python -u "$SCRIPT"
+    python -u "$SCRIPT" $SPANGY_ARGS
 fi
 
 echo "Finished: $(date)"

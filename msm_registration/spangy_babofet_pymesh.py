@@ -34,6 +34,8 @@ Usage:
     python spangy_babofet_pymesh.py --merge         # per-subject + pooled CSVs
     python spangy_babofet_pymesh.py --subjects sub-Aziza sub-Borgne
     python spangy_babofet_pymesh.py --list          # dry run: show work plan
+    python spangy_babofet_pymesh.py --onref         # run on surfaces_on_ref/ instead
+                                                    # (outputs in analysis/spangy_onref/)
 """
 
 import argparse
@@ -65,8 +67,15 @@ POOLED_NAME = 'all_subjects_spangy_pymesh_results.csv'
 N_EIGENPAIRS = 4000
 N_BANDS = 7                     # B0 ... B6
 
-# Mesh files inside <MESH_ROOT>/<sub>/<ses>/anat/
-MESH_GLOB = '*_hemi_*_wm.gii'
+# Mesh files, relative to <MESH_ROOT>/<sub>/
+MESH_RELGLOB = os.path.join('ses-*', 'anat', '*_hemi_*_wm.gii')
+
+# --onref: surfaces already resampled onto each animal's reference mesh
+# (resample_to_ref.py). Outputs then share one vertex numbering per animal/hemisphere.
+ONREF_MESH_ROOT = os.path.join(DATA_ROOT, 'surfaces_on_ref')
+ONREF_RELGLOB = os.path.join('hemi-*', '*_on_ses-*.anat.surf.gii')
+ONREF_OUT_SUBDIR = os.path.join('analysis', 'spangy_onref')
+ONREF_POOLED_NAME = 'all_subjects_spangy_onref_results.csv'
 
 # Subject folders matching any of these substrings are ignored (case-insensitive).
 DEFAULT_EXCLUDE = ['(old)', '_old', '.old', 'backup']
@@ -118,10 +127,10 @@ def build_job_list(mesh_root, wanted=None, exclude=None):
     """[(subject, mesh_path), ...] across all subjects and sessions."""
     jobs = []
     for subject in find_subjects(mesh_root, wanted, exclude):
-        meshes = sorted(glob.glob(os.path.join(mesh_root, subject, 'ses-*', 'anat', MESH_GLOB)))
+        meshes = sorted(glob.glob(os.path.join(mesh_root, subject, MESH_RELGLOB)))
         if not meshes:
             print(f"Warning: no meshes for {subject} matching "
-                  f"{os.path.join(mesh_root, subject, 'ses-*', 'anat', MESH_GLOB)}")
+                  f"{os.path.join(mesh_root, subject, MESH_RELGLOB)}")
             continue
         n_ses = len({parse_ids(m)[2] for m in meshes})
         print(f"  {subject}: {len(meshes)} meshes across {n_ses} sessions")
@@ -343,7 +352,17 @@ def main():
     ap.add_argument('--n-eigen', type=int, default=N_EIGENPAIRS)
     ap.add_argument('--force', action='store_true',
                     help='Recompute even if outputs already exist')
+    ap.add_argument('--onref', action='store_true',
+                    help='Run on the surfaces resampled onto each animal\'s reference mesh '
+                         '(surfaces_on_ref/), writing to analysis/spangy_onref/')
     args = ap.parse_args()
+
+    global MESH_RELGLOB, OUT_SUBDIR, POOLED_NAME
+    if args.onref:
+        MESH_RELGLOB, OUT_SUBDIR, POOLED_NAME = ONREF_RELGLOB, ONREF_OUT_SUBDIR, ONREF_POOLED_NAME
+        if args.mesh_root == MESH_ROOT:
+            args.mesh_root = ONREF_MESH_ROOT
+        print(f"On-reference mode: meshes from {args.mesh_root}, outputs in <sub>/{OUT_SUBDIR}")
 
     if args.merge:
         merge_results(args.root, args.mesh_root, args.subjects, args.exclude)

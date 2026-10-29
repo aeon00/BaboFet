@@ -17,6 +17,9 @@ Usage (cluster, after `source env_setup.sh` with NEED_FREESURFER=0):
 Default --pattern (local dominant band from spangy_babofet_pymesh.py, i.e. SPANGY
 run on the same Pymesh meshes that were registered):
   <BASE>/{sub}/analysis/spangy_pymesh/textures/spangy_dom_band_{sub}_{ses}_hemi-{hemi}.gii
+--onref: SPANGY was run on the surfaces from resample_to_ref.py (spangy_babofet_pymesh.py
+  --onref); textures and surfaces are packed as they are, nothing is resampled.
+--save-gii: also keep the resampled textures and surfaces as GIFTI in <BASE>/spangy_on_ref/.
 Older textures (other meshes):
   --pattern "<BASE>/{sub}/analysis/spangy/textures/spangy_dom_band_{sub}_{ses}_hemi_hemi-{hemiword}_level_0.45.gii"
 Placeholders in --pattern: {sub} {ses} {hemi} (L/R) {hemiword} (left/right).
@@ -27,6 +30,7 @@ import argparse
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,8 +68,15 @@ def main():
     p.add_argument("--name", default=None, help="tag in output file name (default: kind)")
     p.add_argument("--check", action="store_true",
                    help="only check that every texture matches its mesh; write nothing")
+    p.add_argument("--onref", action="store_true",
+                   help="use SPANGY run on the reference-mesh surfaces (spangy_onref): "
+                        "nothing is resampled")
+    p.add_argument("--save-gii", action="store_true",
+                   help="also keep the resampled textures/surfaces as GIFTI in spangy_on_ref/")
     args = p.parse_args()
     n_bad = 0
+    if args.onref and args.name is None:
+        args.name = f"{args.kind}_onref"
 
     chain_root = f"{BASE}/msm_chained/{args.texture}"
     in_root = f"{BASE}/msm_inputs"
@@ -91,6 +102,28 @@ def main():
                 ses = re.search(r"_(ses-\d+)_in_", sph).group(1)
                 tex = args.pattern.format(sub=sub, ses=ses, hemi=hemi, hemiword=hemiword)
                 anat = f"{in_root}/{sub}/{ses}/{sub}_{ses}_hemi-{hemi}.anat.surf.gii"
+                if args.onref:
+                    # SPANGY already ran on the surface resampled onto the reference
+                    # mesh: texture and surface are used as they are, no resampling.
+                    surf = (f"{BASE}/surfaces_on_ref/{sub}/hemi-{hemi}/"
+                            f"{sub}_{ses}_hemi-{hemi}_on_{ref}.anat.surf.gii")
+                    tex = (f"{BASE}/{sub}/analysis/spangy_onref/textures/"
+                           f"spangy_dom_band_{sub}_{ses}_hemi-{hemi}.gii")
+                    missing = [f for f in (surf, tex) if not os.path.isfile(f)]
+                    if missing:
+                        print(f"  [{sub} {hemi} {ses}] missing {missing[0]} -> skipped")
+                        continue
+                    xyz, val = load_surf(surf)[0], load_metric(tex)
+                    if not (len(xyz) == len(val) == faces.max() + 1):
+                        print(f"  [{sub} {hemi} {ses}] MISMATCH: surface {len(xyz)}, texture "
+                              f"{len(val)}, reference {faces.max() + 1} vertices -> skipped")
+                        n_bad += 1
+                        continue
+                    if not args.check:
+                        sessions.append(ses); coords.append(xyz); values.append(val)
+                    else:
+                        print(f"  [{sub} {hemi} {ses}] ok ({len(xyz)} vertices)")
+                    continue
                 if not os.path.isfile(tex):
                     print(f"  [{sub} {hemi} {ses}] no texture at {tex} -> skipped")
                     continue
@@ -117,6 +150,16 @@ def main():
                     wb("-metric-resample", tex, sph, ref_sphere, "ADAP_BARY_AREA", t_out,
                        "-area-surfs", anat, ref_anat)
                 wb("-surface-resample", anat, sph, ref_sphere, "BARYCENTRIC", s_out)
+                if args.save_gii:
+                    gdir = f"{BASE}/spangy_on_ref/{sub}/hemi-{hemi}"
+                    os.makedirs(gdir, exist_ok=True)
+                    stem = f"{gdir}/{sub}_{ses}_hemi-{hemi}_on_{ref}"
+                    struct = "CORTEX_LEFT" if hemi == "L" else "CORTEX_RIGHT"
+                    shutil.copy(t_out, f"{stem}.{tag}.func.gii")
+                    shutil.copy(s_out, f"{stem}.anat.surf.gii")
+                    wb("-set-structure", f"{stem}.{tag}.func.gii", struct)
+                    wb("-set-structure", f"{stem}.anat.surf.gii", struct,
+                       "-surface-type", "ANATOMICAL")
                 sessions.append(ses)
                 values.append(load_metric(t_out))
                 coords.append(load_surf(s_out)[0])
