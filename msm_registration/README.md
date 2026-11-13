@@ -267,6 +267,25 @@ whose distortion is far above the others deserves a look in `wb_view`.
 Each registration is scored on its own texture, so this is **not** a fair comparison of
 sulc vs DPF-star (see open points).
 
+### Registration metrics (following the group's `msm_reg_stats.py`)
+
+```bash
+export NEED_FREESURFER=0; source env_setup.sh
+$PYTHON msm_reg_metrics.py                         # all pairs, sulc and DPF-star
+$PYTHON msm_reg_metrics.py --bands --roi-pattern "<BASE>/{sub}/rois/STS/{sub}_{ses}_hemi-{hemi}_STS.gii" --roi-name STS
+python plot_msm_reg_metrics.py                     # figures + report.html
+```
+
+Per pair: sphere normalisation, then the area-weighted Jacobian (`|log2(area_reg/area_in)|`,
+integral and mean), per-face area change (%), folded triangles, Pearson r of the registration
+texture (MSM's `transformed_and_reprojected` vs reference, and before registration), r of mean
+curvature before/after and of the texture not used, and Dice of labels moved by nearest
+neighbour: sulcal/gyral from the curvature sign, optionally SPANGY bands (`--bands`) and a painted
+ROI present in both sessions (`--roi-pattern`). `--save-maps` writes a per-vertex `|log2 J|` map
+next to each registration. Output: `msm_registered/metrics/msm_reg_metrics.csv`; figures and
+`report.html` in the same folder. Mean curvature and its sign are used by neither registration,
+so they are the fair basis for comparing sulc and DPF-star.
+
 ---
 
 ## Step 4 — Chain to one reference session per animal
@@ -397,6 +416,24 @@ Tables: `spangy_route_comparison/<texture>/per_session.csv`, `band_area_fraction
 `band_powers.csv`; a median/min/max summary is printed at the end. The reference session is
 a sanity check: its resampled surface is its original mesh, so ONREF should match ORIG there.
 
+Figures and report: `python plot_spangy_routes.py [--texture dpfstar]` writes six PNGs to
+`spangy_route_comparison/<texture>/figures/` and one self-contained `report.html` (figures +
+summary tables). Use `--dir <folder>` on a copied comparison folder to run it locally.
+
+### Viewing the routes on inflated surfaces
+
+```bash
+$PYTHON prepare_route_viewer.py                    # sulc registrations
+$PYTHON prepare_route_viewer.py --texture both --also-anat
+```
+
+Copies, per route, every inflated surface and its textures into `route_viewer/<ROUTE>/meshes/`
+and `textures/`, named `<sub>_<ses>_hemi-<H>.inflated.surf.gii` / `.dom_band.gii` /
+`.filt_mean_curv.gii`, so the viewer hub pairs them by subject, session and hemisphere.
+ORIG uses each session's own inflated surface. RESTEX and ONREF use the reference session's
+inflated surface, copied once under each session's name. Vertex counts are checked before
+copying; `--link` makes symlinks instead. A `manifest.csv` per route records every source file.
+
 ### Moving any texture onto the reference mesh by hand
 
 ```bash
@@ -486,6 +523,7 @@ All under `/envau/work/meca/users/dienye.h/python_files/Babofet/`:
 | `spangy_timelapse/` | 6 | `.npz` files for the viewer |
 | `spangy_on_ref/<texture>/` | 5 (compare) / 6 (`--save-gii`) | resampled textures (and surfaces) as GIFTI |
 | `spangy_route_comparison/<texture>/` | 5 (compare) | route comparison tables |
+| `route_viewer/<ROUTE>/` | 5 (viewer) | inflated surfaces + textures per route, for the viewer hub |
 | `logs/` | 5 | SPANGY job logs (`spangy_pymesh_<job>_<task>.out/.err`) |
 
 ---
@@ -507,11 +545,15 @@ All under `/envau/work/meca/users/dienye.h/python_files/Babofet/`:
 | `msm_strain_sulc.conf` | MSM config | HCP-style strain config (reference/example) |
 | `run_msm_example.sh` | login | single-pair MSM example (`TEXTURE=`, `CONF=`) |
 | `run_msm_slurm.sh` | login → SLURM | Step 3: `check` / `list` / `submit` / `summary` |
+| `msm_reg_metrics.py` | login | Step 3: Jacobian, area change, correlations, Dice per pair |
+| `plot_msm_reg_metrics.py` | login / local | Step 3: figures + `report.html` from the metrics CSV |
 | `chain_to_reference.sh` | login | Step 4 |
 | `resample_to_ref.py` | login | Step 5B: surfaces onto the reference mesh + QC |
 | `spangy_babofet_pymesh.py` | SLURM | Step 5: SPANGY (`--onref`, `--reg-texture`, `--list`, `--merge`, `--force`) |
 | `run_spangy_pymesh.sh` | SLURM | Step 5 job array (pass options via `SPANGY_ARGS`) |
 | `compare_spangy_routes.py` | login | Step 5: compare ORIG / RESTEX / ONREF; saves the resampled ORIG textures |
+| `prepare_route_viewer.py` | login | Step 5: per-route folders of inflated surfaces + textures for the viewer hub |
+| `plot_spangy_routes.py` | login / local | Step 5: figures + `report.html` from the comparison tables |
 | `build_spangy_timelapse.py` | login | Step 6: build `.npz` (`--onref`, `--check`, `--save-gii`, `--kind`, `--pattern`) |
 | `view_spangy_timelapse.py` | local | Step 6: interactive viewer / movie export |
 
