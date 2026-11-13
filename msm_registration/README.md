@@ -371,6 +371,32 @@ writes `<sub>_hemi-<H>_resample_qc.txt`, which you should check before SPANGY:
 SPANGY output: `<sub>/analysis/spangy_onref_<texture>/`; pooled
 `analysis_pooled/all_subjects_spangy_onref_<texture>_results.csv`.
 
+### Comparing the routes
+
+```bash
+$PYTHON compare_spangy_routes.py                     # sulc registrations
+$PYTHON compare_spangy_routes.py --texture dpfstar
+```
+
+Needs route A, `surfaces_on_ref/` and route B for the same texture. It compares three
+versions of every session:
+
+| Name | What it is |
+|---|---|
+| ORIG | SPANGY on the original mesh (route A) |
+| RESTEX | ORIG band map and mean curvature resampled onto the reference mesh, **saved** to `spangy_on_ref/<texture>/<sub>/hemi-<H>/<sub>_<ses>_hemi-<H>_on_<ref>.{dom_band,filt_mean_curv}.func.gii` |
+| ONREF | SPANGY on the resampled surface (route B) |
+
+- **RESTEX vs ONREF**, vertex by vertex and area-weighted: same label, same band, same
+  sulcal/gyral side, bands off by one, Cohen's kappa, and the correlation of mean curvature.
+- **All three:** the share of surface area dominated by each signed band, computed on each
+  route's own mesh.
+- **ORIG vs ONREF:** global band powers and folding power, from SPANGY's per-file JSON.
+
+Tables: `spangy_route_comparison/<texture>/per_session.csv`, `band_area_fractions.csv`,
+`band_powers.csv`; a median/min/max summary is printed at the end. The reference session is
+a sanity check: its resampled surface is its original mesh, so ONREF should match ORIG there.
+
 ### Moving any texture onto the reference mesh by hand
 
 ```bash
@@ -458,7 +484,8 @@ All under `/envau/work/meca/users/dienye.h/python_files/Babofet/`:
 | `<sub>/analysis/spangy_onref_<texture>/` | 5B | SPANGY on reference-mesh surfaces |
 | `analysis_pooled/` | 5 | pooled SPANGY CSVs |
 | `spangy_timelapse/` | 6 | `.npz` files for the viewer |
-| `spangy_on_ref/<texture>/` | 6 (`--save-gii`) | resampled textures and surfaces as GIFTI |
+| `spangy_on_ref/<texture>/` | 5 (compare) / 6 (`--save-gii`) | resampled textures (and surfaces) as GIFTI |
+| `spangy_route_comparison/<texture>/` | 5 (compare) | route comparison tables |
 | `logs/` | 5 | SPANGY job logs (`spangy_pymesh_<job>_<task>.out/.err`) |
 
 ---
@@ -484,6 +511,7 @@ All under `/envau/work/meca/users/dienye.h/python_files/Babofet/`:
 | `resample_to_ref.py` | login | Step 5B: surfaces onto the reference mesh + QC |
 | `spangy_babofet_pymesh.py` | SLURM | Step 5: SPANGY (`--onref`, `--reg-texture`, `--list`, `--merge`, `--force`) |
 | `run_spangy_pymesh.sh` | SLURM | Step 5 job array (pass options via `SPANGY_ARGS`) |
+| `compare_spangy_routes.py` | login | Step 5: compare ORIG / RESTEX / ONREF; saves the resampled ORIG textures |
 | `build_spangy_timelapse.py` | login | Step 6: build `.npz` (`--onref`, `--check`, `--save-gii`, `--kind`, `--pattern`) |
 | `view_spangy_timelapse.py` | local | Step 6: interactive viewer / movie export |
 
