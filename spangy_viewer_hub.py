@@ -18,7 +18,10 @@ Features
   - directory pickers with quick-path presets (scanned from --base) and sub-folders
   - Prev / Next / Play to cycle through meshes or sessions
   - Sulci / Gyri / Both toggle + per-band checklist; label or continuous colouring
-  - ROI: outside greyed or hidden
+  - smooth band edges: boundaries drawn as contours of the lightly smoothed band
+    map (strength adjustable, 0 = exact), no colour blending
+  - anything not drawn in colour (unselected bands, outside the ROI, missing
+    values) is set to 0 and shown grey, never NaN; the ROI outside can also be hidden
   - camera presets, fixed scale across sessions (growth stays visible)
   - screenshots: toolbar camera icon, or Save PNG (PyVista / Plotly-kaleido / matplotlib)
   - Save HTML: current view, or an animated Plotly timelapse (play button + slider)
@@ -448,6 +451,93 @@ def face_majority(vals, faces):
     return out
 
 
+HIDDEN = 99.0      # internal label for vertices that are not drawn at all
+
+
+def smooth_label_scores(faces, lab, n_iter):
+    """
+    One score per (vertex, label): the one-hot label map averaged n_iter times
+    with each vertex's neighbours. Returns (labels, scores (V, n_labels)).
+    """
+    import scipy.sparse as sp
+    lab = np.asarray(lab, float)
+    labels = np.unique(lab)
+    P = (lab[:, None] == labels[None, :]).astype(float)
+    if n_iter > 0 and len(labels) > 1:
+        n = len(lab)
+        e = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+        A = sp.coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(n, n)).tocsr()
+        A = A + A.T
+        A.data[:] = 1.0
+        A = A + sp.identity(n, format="csr")
+        A = sp.diags(1.0 / np.asarray(A.sum(axis=1)).ravel()) @ A
+        for _ in range(int(n_iter)):
+            P = A @ P
+    return labels, P
+
+
+def refine_label_faces(coords, faces, lab, labels=None, P=None):
+    """
+    Smooth band boundaries by contouring. Triangles whose three vertices share a
+    label are kept. In the others the boundary is a straight cut between points
+    on the two edges it crosses; with scores P (smooth_label_scores) each point
+    sits where the two bands' smoothed scores are equal, so cuts in neighbouring
+    triangles line up into a smooth curve (without P: edge midpoints). Triangles
+    with three different labels are fanned around their centre. Cut points are
+    shared between neighbouring triangles, so the surface stays closed.
+
+    Returns coords (cut points appended), faces, face labels.
+    """
+    lab = np.asarray(lab, float)
+    n = len(coords)
+    L = lab[faces]
+    uni = (L[:, 0] == L[:, 1]) & (L[:, 1] == L[:, 2])
+    if uni.all():
+        return coords, faces, L[:, 0]
+    pair = (L[:, 0] == L[:, 1]) | (L[:, 1] == L[:, 2]) | (L[:, 0] == L[:, 2])
+    two, three = ~uni & pair, ~uni & ~pair
+
+    key = lambda u, v: np.minimum(u, v) * n + np.maximum(u, v)          # noqa: E731
+    mf = faces[~uni]
+    eu = np.concatenate([mf[:, 0], mf[:, 1], mf[:, 2]])
+    ev = np.concatenate([mf[:, 1], mf[:, 2], mf[:, 0]])
+    mixed = lab[eu] != lab[ev]
+    uk = np.unique(key(eu[mixed], ev[mixed]))
+    u0, v0 = uk // n, uk % n
+    t = np.full(len(uk), 0.5)
+    if P is not None:
+        col = np.searchsorted(labels, lab)
+        a, b = col[u0], col[v0]
+        du = P[u0, a] - P[u0, b]
+        dv = P[v0, a] - P[v0, b]
+        ok = (du - dv) > 1e-12
+        t[ok] = du[ok] / (du[ok] - dv[ok])
+        t = np.clip(t, 0.03, 0.97)
+    cut = coords[u0] * (1 - t)[:, None] + coords[v0] * t[:, None]
+    cut_id = lambda u, v: n + np.searchsorted(uk, key(u, v))            # noqa: E731
+
+    out_f, out_l = [faces[uni]], [L[uni, 0]]
+    # two labels: rotate so that vertex a is the odd one out
+    f, l2 = faces[two], L[two]
+    lone = np.where(l2[:, 0] == l2[:, 1], 2, np.where(l2[:, 1] == l2[:, 2], 0, 1))
+    R = np.take_along_axis(f, (lone[:, None] + np.arange(3)) % 3, axis=1)
+    a, b, c = R[:, 0], R[:, 1], R[:, 2]
+    mab, mca = cut_id(a, b), cut_id(c, a)
+    out_f += [np.c_[a, mab, mca], np.c_[mab, b, c], np.c_[mab, c, mca]]
+    out_l += [lab[a], lab[b], lab[b]]
+    # three labels: fan around the centre of the three cut points
+    f = faces[three]
+    a, b, c = f[:, 0], f[:, 1], f[:, 2]
+    mab, mbc, mca = cut_id(a, b), cut_id(b, c), cut_id(c, a)
+    g = n + len(uk) + np.arange(len(f))
+    gc = (cut[mab - n] + cut[mbc - n] + cut[mca - n]) / 3.0 if len(f) else np.zeros((0, 3))
+    out_f += [np.c_[a, mab, g], np.c_[a, g, mca], np.c_[b, mbc, g], np.c_[b, g, mab],
+              np.c_[c, mca, g], np.c_[c, g, mbc]]
+    out_l += [lab[a], lab[a], lab[b], lab[b], lab[c], lab[c]]
+    return (np.vstack([coords, cut, gc]), np.vstack(out_f).astype(np.int64),
+            np.concatenate(out_l))
+
+
 def face_areas(coords, faces):
     p = coords[faces]
     return 0.5 * np.linalg.norm(np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]), axis=1)
@@ -460,31 +550,45 @@ def render_data(frame, st, kind, crange):
     coords = np.asarray(frame["coords"], float)
     if st.get("rotate180"):
         coords = coords * np.array([-1.0, 1.0, -1.0])
-    inside_v = np.ones(len(v), bool) if frame["roi"] is None else frame["roi"].copy()
-    if kind == "continuous":
-        inside_v &= np.isfinite(v)
-    fin = inside_v[faces].all(axis=1)
-    rd = dict(coords=coords, faces_in=faces[fin], faces_out=faces[~fin], kind=kind,
-              name=frame["name"], has_roi=frame["roi"] is not None)
+    in_roi = np.ones(len(v), bool) if frame["roi"] is None else frame["roi"].astype(bool)
     gl = bool(st.get("gyri_light"))
+    rd = dict(kind=kind, name=frame["name"], has_roi=frame["roi"] is not None)
     if kind == "label":
+        # Everything that is not drawn in colour gets the value 0 (grey): NaN,
+        # unselected bands, and outside the ROI (unless 'hidden' is chosen).
         bands = colored_bands(st)
-        rv = np.clip(np.where(np.isfinite(v), np.round(v), 0), BAND_MIN, BAND_MAX)
-        fv = face_majority(rv, faces)[fin]
-        shown = np.where(np.isin(fv, bands), fv, 0)
-        rd["face_values"] = shown
-        rgb = np.tile(np.array(hex_to_rgb(UNSELECTED_COLOR), np.uint8), (len(shown), 1))
+        rv = np.clip(np.where(np.isfinite(v), np.round(v), 0.0), BAND_MIN, BAND_MAX)
+        sv = np.where(np.isin(rv, bands), rv, 0.0)
+        sv = np.where(in_roi, sv, HIDDEN if st.get("roi_outside") == "hide" else 0.0)
+        # Legend shares come from the data as they are (vertex areas), so display
+        # smoothing never changes the numbers.
+        va = np.bincount(faces.ravel(), np.repeat(face_areas(coords, faces) / 3.0, 3),
+                         minlength=len(v))
+        tot = float(va[in_roi].sum())
+        legend = [(b, band_color(b, gl), 100.0 * float(va[in_roi & (sv == b)].sum()) / tot
+                   if tot else 0.0) for b in bands]
+        if st.get("smooth_edges", True):
+            n_iter = int(st.get("edge_smooth", 2) or 0)
+            labels, P = smooth_label_scores(faces, sv, n_iter)
+            sm = labels[np.argmax(P, axis=1)] if n_iter > 0 else sv
+            coords, f2, fl = refine_label_faces(coords, faces, sm, labels,
+                                                P if n_iter > 0 else None)
+        else:
+            f2, fl = faces, face_majority(sv, faces)
+        keep = fl != HIDDEN
+        f2, fl = f2[keep], fl[keep]
+        rgb = np.tile(np.array(hex_to_rgb(UNSELECTED_COLOR), np.uint8), (len(fl), 1))
         for b in bands:
-            rgb[shown == b] = hex_to_rgb(band_color(b, gl))
-        rd["face_rgb_in"] = rgb
-        area = face_areas(coords, rd["faces_in"])
-        tot = float(area.sum())
-        rd["legend"] = [(b, band_color(b, gl), 100.0 * float(area[shown == b].sum()) / tot
-                         if tot else 0.0) for b in bands]
-        rd["colorscale"] = discrete_colorscale(bands, gl)
+            rgb[fl == b] = hex_to_rgb(band_color(b, gl))
+        rd.update(coords=coords, faces_in=f2, faces_out=np.zeros((0, 3), np.int64),
+                  face_values=fl, face_rgb_in=rgb, legend=legend,
+                  colorscale=discrete_colorscale(bands, gl))
     else:
+        inside_v = in_roi & np.isfinite(v)
+        fin = inside_v[faces].all(axis=1)
+        rd.update(coords=coords, faces_in=faces[fin], faces_out=faces[~fin])
         vmin, vmax = crange
-        vv = np.where(np.isfinite(v), v, vmin)
+        vv = np.where(np.isfinite(v), v, 0.0)          # no NaN reaches the renderers
         t = np.clip((vv - vmin) / (vmax - vmin), 0, 1)
         vrgb = (mpl_cmap(st.get("cmap", "viridis"))(t)[:, :3] * 255).astype(np.uint8)
         rd["vertex_values"] = vv
@@ -715,8 +819,8 @@ class MatplotlibRenderer:
         w, h = self.size
         fig = plt.figure(figsize=(w / 100, h / 100), dpi=100)
         ax = fig.add_subplot(projection="3d")
-        ax.add_collection3d(Poly3DCollection(tri, facecolors=cols, edgecolors="none",
-                                             linewidths=0))
+        ax.add_collection3d(Poly3DCollection(tri, facecolors=cols, edgecolors=cols,
+                                             linewidths=0.3))
         lo, hi = self.bounds
         ax.set_xlim(lo[0], hi[0]); ax.set_ylim(lo[1], hi[1]); ax.set_zlim(lo[2], hi[2])
         ax.set_box_aspect(tuple(np.maximum(hi - lo, 1e-9)))
@@ -961,6 +1065,7 @@ SETTING_INPUTS = [
     ("roi_outside", "roi-outside", "value"), ("cmap", "cmap-dd", "value"),
     ("vmin", "vmin-input", "value"), ("vmax", "vmax-input", "value"),
     ("camera", "camera-radio", "value"), ("orient", "orient-opts", "value"),
+    ("edge_smooth", "edge-smooth", "value"),
 ]
 
 
@@ -973,12 +1078,14 @@ def clean_settings(raw):
     st["only_checked"] = "only" in opts
     st["gyri_light"] = "light" in opts
     st["fixed_scale"] = "fixed" in opts
+    st["smooth_edges"] = "smooth" in opts
     orient = raw.get("orient") or []
     st["rotate180"], st["flip"] = "rot180" in orient, "flip" in orient
     st.pop("display_opts", None)
     st.pop("orient", None)
     for k in ("vmin", "vmax"):
         st[k] = None if st.get(k) in ("", None) else float(st[k])
+    st["edge_smooth"] = 2 if st.get("edge_smooth") in ("", None) else int(st["edge_smooth"])
     return st
 
 
@@ -1162,15 +1269,23 @@ def build_app(args):
                                            for b in sorted(ALL_BANDS, reverse=True)],
                                   style={"columnCount": 2, "marginTop": "6px"},
                                   inputStyle={"marginRight": "4px"}),
-                    dcc.Checklist(id="display-opts", value=["only", "fixed"],
+                    dcc.Checklist(id="display-opts", value=["only", "smooth", "fixed"],
                                   options=[{"label": " only checked bands", "value": "only"},
+                                           {"label": " smooth band edges", "value": "smooth"},
                                            {"label": " gyri in lighter shades", "value": "light"},
                                            {"label": " fixed scale across sessions",
                                             "value": "fixed"}],
                                   inputStyle={"marginRight": "4px"}),
+                    html.Div([html.Span("edge smoothing "),
+                              dcc.Slider(id="edge-smooth", min=0, max=6, step=1, value=2,
+                                         marks={0: "exact", 2: "2", 4: "4", 6: "6"})],
+                             style={"marginTop": "6px"}),
+                    html.Div("Display only: 0 keeps every vertex's band; higher values round "
+                             "off patches smaller than a few triangles. The legend "
+                             "percentages always come from the unsmoothed data.", style=hint),
                     html.Label("Outside the ROI", style=label_style),
                     dcc.RadioItems(id="roi-outside", value="grey", inline=True,
-                                   options=[{"label": " grey ", "value": "grey"},
+                                   options=[{"label": " grey (value 0) ", "value": "grey"},
                                             {"label": " hidden", "value": "hide"}],
                                    inputStyle={"marginRight": "4px"}),
                     html.Label("Continuous maps", style=label_style),
