@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
 """
-plot_spangy_routes.py — figures and an HTML report for the output of
-compare_spangy_routes.py (ORIG vs RESTEX vs ONREF).
+plot_spangy_routes.py — simple figures and a plain-language report from the
+tables written by compare_spangy_routes.py.
 
-Usage (cluster or locally, needs pandas + matplotlib):
-    python plot_spangy_routes.py                       # sulc registrations
+The three versions of every session's SPANGY result:
+  original mesh                    SPANGY on the session's own mesh (no interpolation)
+  maps moved to the reference      the original maps resampled onto the reference mesh
+  SPANGY rerun on the reference    SPANGY run again on the session's surface resampled
+                                   onto the reference mesh
+
+Every figure answers one question, written as its title. Bars show the MEDIAN
+over sessions; each dot is one session of one animal and hemisphere.
+
+Usage:
+    python plot_spangy_routes.py                     # sulc registrations
     python plot_spangy_routes.py --texture dpfstar
-    python plot_spangy_routes.py --dir /path/to/spangy_route_comparison/sulc   # copied folder
+    python plot_spangy_routes.py --dir /path/to/spangy_route_comparison/sulc
 
 Writes into <dir>/figures/:
-    1_agreement_vs_distance.png   RESTEX vs ONREF vertex agreement against sessions from the reference
-    2_agreement_heatmap.png       same-label agreement for every animal/hemisphere/session
-    3_curvature_corr.png          mean-curvature correlation RESTEX vs ONREF
-    4_band_area_shares.png        area share of each band: RESTEX and ONREF against ORIG
-    5_band_power_diff.png         global band power, ONREF relative to ORIG, per band
-    6_band_power_vs_distance.png  same, against sessions from the reference (B3-B6)
-and <dir>/report.html (all figures + summary tables, one self-contained file).
+    1_do_the_two_versions_agree.png
+    2_band_coverage_vs_original.png
+    3_band_strength_change.png
+    4_change_with_distance.png
+    5_sessions_that_disagree_most.png
+and <dir>/report.html with every figure and its explanation.
 """
 import argparse
 import base64
@@ -30,20 +38,20 @@ import pandas as pd
 
 BASE = "/envau/work/meca/users/dienye.h/python_files/Babofet"
 
-# validated categorical palette, slots 1-3 in fixed order (one colour per route)
-ROUTE = {"ORIG": "#2a78d6", "RESTEX": "#eb6834", "ONREF": "#1baf7a"}
-MARK = {"ORIG": "o", "RESTEX": "s", "ONREF": "^"}     # secondary encoding, not colour alone
-SURFACE, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
-SEQ = "Blues"                                         # one-hue sequential for the heatmap
+ROUTE_NAME = {"ORIG": "original mesh",
+              "RESTEX": "maps moved to the reference mesh",
+              "ONREF": "SPANGY rerun on the reference mesh"}
+COLOURS = {"ORIG": "#2a78d6", "RESTEX": "#eb6834", "ONREF": "#1baf7a"}
+AGREE_MAIN, AGREE_LIGHT = "#2a78d6", "#9cc3f0"
+SURFACE, INK, INK2, GRID = "#fcfcfb", "#1b1b1a", "#55534f", "#e4e3df"
 
 plt.rcParams.update({
     "figure.facecolor": SURFACE, "axes.facecolor": SURFACE, "savefig.facecolor": SURFACE,
     "axes.edgecolor": GRID, "axes.labelcolor": INK2, "xtick.color": INK2, "ytick.color": INK2,
-    "text.color": INK, "axes.titlecolor": INK, "axes.titlesize": 11, "axes.labelsize": 9,
-    "xtick.labelsize": 8, "ytick.labelsize": 8, "legend.fontsize": 8, "legend.frameon": False,
-    "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.6,
-    "axes.spines.top": False, "axes.spines.right": False, "lines.linewidth": 2,
-    "font.family": "DejaVu Sans",
+    "text.color": INK, "axes.titlecolor": INK, "axes.titlesize": 12, "axes.labelsize": 10,
+    "xtick.labelsize": 10, "ytick.labelsize": 9, "legend.fontsize": 10, "legend.frameon": False,
+    "axes.grid": True, "axes.grid.axis": "y", "grid.color": GRID, "grid.linewidth": 0.7,
+    "axes.spines.top": False, "axes.spines.right": False, "axes.spines.left": False,
 })
 
 
@@ -51,253 +59,258 @@ def ses_num(s):
     return int(re.search(r"\d+", str(s)).group())
 
 
-def jitter(n, width=0.18, seed=0):
+def gap_label(g):
+    return "the reference\nsession itself" if g == 0 else f"{g} session{'s' if g > 1 else ''}\nbefore it"
+
+
+def jitter(n, seed=0, width=0.12):
     return np.random.default_rng(seed).uniform(-width, width, n)
 
 
+def fmt(v, unit=""):
+    if not np.isfinite(v):
+        return ""
+    return f"{v:.0f}{unit}" if abs(v) >= 10 else f"{v:.1f}{unit}"
+
+
+def bar_with_dots(ax, x, values, colour, seed=0, width=0.6, unit="", label_median=True):
+    v = np.asarray(values, float)
+    v = v[np.isfinite(v)]
+    if not len(v):
+        return
+    med = np.median(v)
+    ax.bar(x, med, width=width, color=colour, alpha=0.85, edgecolor=SURFACE, linewidth=2, zorder=2)
+    ax.scatter(x + jitter(len(v), seed, width * 0.2), v, s=12, color=INK, alpha=0.35, zorder=3,
+               linewidths=0)
+    if label_median:
+        y = max(med, v.max()) if med >= 0 else min(med, v.min())
+        ax.text(x, y, f"median {fmt(med, unit)}", ha="center", va="bottom" if med >= 0 else "top",
+                fontsize=9.5, color=INK, zorder=4)
+
+
+def legend_row(fig, items):
+    fig.legend(handles=[plt.Rectangle((0, 0), 1, 1, color=c, label=l) for l, c in items],
+               loc="upper left", bbox_to_anchor=(0.005, 0.0), ncol=len(items))
+    fig._has_legend_row = True
+
+
+def caption(fig, text):
+    y = -0.09 if getattr(fig, "_has_legend_row", False) else -0.02
+    fig.text(0.01, y, text, ha="left", va="top", fontsize=9.5, color=INK2, wrap=True)
+
+
 def save(fig, path):
-    fig.savefig(path, dpi=200, bbox_inches="tight")
+    fig.savefig(path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     print(f"  {path}")
+    return path
 
 
-def median_line(ax, x, y, color):
-    m = pd.Series(y).groupby(np.asarray(x)).median()
-    ax.plot(m.index, m.values, color=color, lw=2, zorder=3)
-
-
-# --- figures -------------------------------------------------------------------
-def fig_agreement_vs_distance(ps, out):
-    cols = [("restex_vs_onref_same_label", "Same label (band + side)"),
-            ("restex_vs_onref_same_band", "Same band (either side)"),
-            ("restex_vs_onref_same_side", "Same side (sulcal/gyral)"),
-            ("restex_vs_onref_kappa", "Cohen's kappa")]
-    fig, axes = plt.subplots(1, 4, figsize=(14, 3.6), sharex=True)
-    for ax, (c, title) in zip(axes, cols):
-        x = ps["distance"].values
-        ax.scatter(x + jitter(len(x)), ps[c], s=22, color=ROUTE["ONREF"], marker="o",
-                   edgecolor=SURFACE, linewidth=0.8, alpha=0.85, zorder=2)
-        median_line(ax, x, ps[c].values, INK2)
-        ax.set_title(title, loc="left")
-        ax.set_xlabel("Sessions before the reference")
-        ax.set_ylim(min(0.5, ps[c].min() - 0.02), 1.0)
-    axes[0].set_ylabel("Area-weighted agreement\nRESTEX vs ONREF")
-    axes[-1].plot([], [], color=INK2, label="median")
-    axes[-1].legend(loc="lower left")
-    fig.suptitle("Vertex-wise agreement between resampled textures and SPANGY on resampled surfaces",
-                 x=0.01, ha="left", fontsize=12)
+# --- figures -----------------------------------------------------------------------
+def fig_agree(ps, out):
+    gaps = sorted(ps["gap"].unique())
+    fig, ax = plt.subplots(figsize=(max(6.5, 1.3 * len(gaps) + 2), 4.6))
+    for i, g in enumerate(gaps):
+        d = ps[ps["gap"] == g]
+        bar_with_dots(ax, i - 0.2, 100 * d["restex_vs_onref_same_label"], AGREE_MAIN, seed=i,
+                      width=0.38, unit="%")
+        bar_with_dots(ax, i + 0.2, 100 * d["restex_vs_onref_same_side"], AGREE_LIGHT, seed=50 + i,
+                      width=0.38, unit="%")
+    ax.set_xticks(range(len(gaps)), [gap_label(g) for g in gaps])
+    ax.set_ylabel("% of the surface where both versions agree")
+    ax.set_ylim(0, 108)
+    ax.set_title("Agreement between the two versions on the reference mesh (higher is better)",
+                 loc="left")
+    legend_row(fig, [("same band and same side (sulcus or gyrus)", AGREE_MAIN),
+                     ("same side only (sulcus or gyrus)", AGREE_LIGHT)])
+    fig.suptitle("Do the two shared-mesh versions give the same result?", x=0.01, ha="left",
+                 fontsize=14, fontweight="bold")
+    caption(fig, "Compares ‘maps moved to the reference mesh’ with ‘SPANGY rerun on the reference mesh’, "
+                 "vertex by vertex. Sessions are grouped by how far they are from the reference session "
+                 "of their animal. At the reference session itself both should agree almost completely.")
     fig.tight_layout()
-    save(fig, f"{out}/1_agreement_vs_distance.png")
+    return save(fig, f"{out}/1_do_the_two_versions_agree.png")
 
 
-def fig_heatmap(ps, out):
-    ps = ps.assign(row=ps["subject"].str.replace("sub-", "") + " " + ps["hemi"])
-    piv = ps.pivot_table(index="row", columns="session", values="restex_vs_onref_same_label")
-    piv = piv[sorted(piv.columns, key=ses_num)]
-    fig, ax = plt.subplots(figsize=(1.0 + 0.62 * piv.shape[1], 0.9 + 0.36 * piv.shape[0]))
-    im = ax.imshow(piv.values, cmap=SEQ, vmin=np.nanmin(piv.values), vmax=1.0, aspect="auto")
-    ax.set_xticks(range(piv.shape[1]), [c.replace("ses-", "") for c in piv.columns])
-    ax.set_yticks(range(piv.shape[0]), piv.index)
-    ax.grid(False)
-    for i in range(piv.shape[0]):
-        for j in range(piv.shape[1]):
-            v = piv.values[i, j]
-            if np.isfinite(v):
-                dark = (v - np.nanmin(piv.values)) / (1 - np.nanmin(piv.values) + 1e-9) > 0.6
-                ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=7,
-                        color=SURFACE if dark else INK)
-    ax.set_xlabel("Session")
-    ax.set_title("Same-label agreement, RESTEX vs ONREF (blank = not compared)", loc="left")
-    cb = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-    cb.outline.set_visible(False)
-    fig.tight_layout()
-    save(fig, f"{out}/2_agreement_heatmap.png")
-
-
-def fig_curvature(ps, out):
-    if "curv_corr_restex_vs_onref" not in ps:
-        return False
-    fig, ax = plt.subplots(figsize=(5.5, 3.6))
-    x, y = ps["distance"].values, ps["curv_corr_restex_vs_onref"].values
-    ax.scatter(x + jitter(len(x)), y, s=22, color=ROUTE["ONREF"], edgecolor=SURFACE,
-               linewidth=0.8, alpha=0.85)
-    median_line(ax, x, y, INK2)
-    ax.set_xlabel("Sessions before the reference")
-    ax.set_ylabel("Correlation of mean curvature\nRESTEX vs ONREF")
-    ax.set_title("Mean curvature: resampled vs recomputed", loc="left")
-    fig.tight_layout()
-    save(fig, f"{out}/3_curvature_corr.png")
-    return True
-
-
-def fig_band_shares(fr, out):
-    bands = ["B3", "B4", "B5", "B6"]
+def fig_coverage(fr, out):
     long = fr.melt(id_vars=["subject", "hemi", "session", "route"], var_name="band_side",
                    value_name="share")
     long[["band", "side"]] = long["band_side"].str.split("_", expand=True)
+    long = long[long["band"].isin(["B3", "B4", "B5", "B6"])]
     wide = long.pivot_table(index=["subject", "hemi", "session", "band", "side"],
                             columns="route", values="share").reset_index()
-    fig, axes = plt.subplots(1, 4, figsize=(14, 3.8))
-    for ax, b in zip(axes, bands):
-        d = wide[wide["band"] == b]
-        hi = float(np.nanmax(d[["ORIG", "RESTEX", "ONREF"]].values)) * 1.08 if len(d) else 1
-        ax.plot([0, hi], [0, hi], color=INK2, lw=1, ls="--", zorder=1)
-        for route in ("RESTEX", "ONREF"):
-            for side, fill in (("gyral", True), ("sulcal", False)):
-                s = d[d["side"] == side]
-                ax.scatter(s["ORIG"], s[route], s=22, marker=MARK[route], zorder=2,
-                           facecolor=ROUTE[route] if fill else "none",
-                           edgecolor=ROUTE[route], linewidth=1.1, alpha=0.85)
-        ax.set_xlim(0, hi); ax.set_ylim(0, hi)
-        ax.set_title(f"{b}", loc="left")
-        ax.set_xlabel("Area share, ORIG (original mesh)")
-    axes[0].set_ylabel("Area share on reference mesh")
-    h = [plt.Line2D([], [], ls="", marker=MARK[r], color=ROUTE[r], label=r) for r in ("RESTEX", "ONREF")]
-    h += [plt.Line2D([], [], ls="", marker="o", color=INK2, label="gyral (filled)"),
-          plt.Line2D([], [], ls="", marker="o", mfc="none", color=INK2, label="sulcal (open)"),
-          plt.Line2D([], [], color=INK2, lw=1, ls="--", label="identity")]
-    fig.suptitle("Share of surface dominated by each band: closer to the identity line = closer to ORIG",
-                 x=0.01, ha="left", fontsize=12)
-    fig.tight_layout(rect=(0, 0.07, 1, 1))
-    fig.legend(handles=h, loc="lower center", ncol=5, bbox_to_anchor=(0.5, 0.0))
-    save(fig, f"{out}/4_band_area_shares.png")
-    return wide
-
-
-def fig_band_power(pw, ps, out):
-    pw = pw.merge(ps[["subject", "hemi", "session", "distance"]], on=["subject", "hemi", "session"])
-    bands = sorted(pw["band"].unique(), key=lambda b: int(b[1:]))
-    fig, ax = plt.subplots(figsize=(7, 3.8))
+    if "ORIG" not in wide:
+        return None
+    bands = ["B3", "B4", "B5", "B6"]
+    routes = [r for r in ("RESTEX", "ONREF") if r in wide]
+    fig, ax = plt.subplots(figsize=(8.5, 4.6))
     for k, b in enumerate(bands):
-        y = 100 * pw.loc[pw["band"] == b, "rel_diff"].values
-        ax.scatter(k + jitter(len(y)), y, s=18, color=ROUTE["ONREF"], marker=MARK["ONREF"],
-                   edgecolor=SURFACE, linewidth=0.6, alpha=0.8)
-        ax.plot([k - 0.28, k + 0.28], [np.nanmedian(y)] * 2, color=INK, lw=2)
+        d = wide[wide["band"] == b]
+        for ri, r in enumerate(routes):
+            # absolute difference from the original, in percentage points of the surface
+            diff = 100 * (d[r] - d["ORIG"]).abs()
+            bar_with_dots(ax, k + (ri - 0.5) * 0.4, diff, COLOURS[r], seed=k * 3 + ri, width=0.38)
+    ax.set_xticks(range(len(bands)), [f"Band {b[1]}" for b in bands])
+    ax.set_ylabel("difference from the original\n(percentage points of the surface)")
+    ax.set_title("How far each version is from the original mesh result (lower is better)", loc="left")
+    ax.margins(y=0.15)
+    legend_row(fig, [(ROUTE_NAME[r], COLOURS[r]) for r in routes])
+    fig.suptitle("Which version keeps the area covered by each band closest to the original?",
+                 x=0.01, ha="left", fontsize=14, fontweight="bold")
+    caption(fig, "For each band, the share of the brain surface that the band dominates, compared with the "
+                 "result on the original mesh. Example: 2 means the band covers 2% more or 2% less of the "
+                 "surface than in the original. Sulcal and gyral parts are counted separately.")
+    fig.tight_layout()
+    return save(fig, f"{out}/2_band_coverage_vs_original.png")
+
+
+def fig_power(pw, out):
+    bands = [b for b in ("B1", "B2", "B3", "B4", "B5", "B6") if b in set(pw["band"])]
+    fig, ax = plt.subplots(figsize=(8.5, 4.6))
+    for k, b in enumerate(bands):
+        bar_with_dots(ax, k, 100 * pw.loc[pw["band"] == b, "rel_diff"], COLOURS["ONREF"],
+                      seed=k, unit="%")
     ax.axhline(0, color=INK2, lw=1)
-    ax.set_xticks(range(len(bands)), bands)
-    ax.set_ylabel("ONREF − ORIG (% of ORIG)")
-    ax.set_title("Global band power after resampling the surface (bar = median)", loc="left")
+    ax.set_xticks(range(len(bands)), [f"Band {b[1]}" for b in bands])
+    ax.set_ylabel("change compared with the original (%)")
+    ax.set_title("Strength of each band when SPANGY is rerun on the reference mesh (0 = no change)",
+                 loc="left")
+    ax.margins(y=0.2)
+    fig.suptitle("Does rerunning SPANGY on the resampled surface change the band strengths?",
+                 x=0.01, ha="left", fontsize=14, fontweight="bold")
+    caption(fig, "Band strength is SPANGY's power for that band over the whole hemisphere. Negative values "
+                 "mean weaker than on the original mesh. Lower strength in bands 5 and 6 means fine folds "
+                 "were smoothed out by resampling the surface.")
     fig.tight_layout()
-    save(fig, f"{out}/5_band_power_diff.png")
+    return save(fig, f"{out}/3_band_strength_change.png")
 
-    hb = [b for b in ("B3", "B4", "B5", "B6") if b in bands]
-    fig, axes = plt.subplots(1, len(hb), figsize=(3.5 * len(hb), 3.4), sharey=True, sharex=True)
-    axes = np.atleast_1d(axes)
-    for ax, b in zip(axes, hb):
-        d = pw[pw["band"] == b]
-        x, y = d["distance"].values, 100 * d["rel_diff"].values
-        ax.scatter(x + jitter(len(x)), y, s=18, color=ROUTE["ONREF"], marker=MARK["ONREF"],
-                   edgecolor=SURFACE, linewidth=0.6, alpha=0.8)
-        median_line(ax, x, y, INK2)
-        ax.axhline(0, color=INK2, lw=1)
-        ax.set_title(b, loc="left")
-        ax.set_xlabel("Sessions before the reference")
-    axes[0].set_ylabel("ONREF − ORIG (% of ORIG)")
-    fig.suptitle("Band power difference (ONREF vs ORIG) by distance from the reference (line = median)",
-                 x=0.01, ha="left", fontsize=12)
+
+def fig_distance(ps, out):
+    col = "afp_rel_diff_onref_vs_orig"
+    if col not in ps:
+        return None
+    gaps = sorted(ps["gap"].unique())
+    fig, ax = plt.subplots(figsize=(max(6.5, 1.2 * len(gaps) + 2), 4.6))
+    for i, g in enumerate(gaps):
+        bar_with_dots(ax, i, 100 * ps.loc[ps["gap"] == g, col], COLOURS["ONREF"], seed=i, unit="%")
+    ax.axhline(0, color=INK2, lw=1)
+    ax.set_xticks(range(len(gaps)), [gap_label(g) for g in gaps])
+    ax.set_ylabel("change compared with the original (%)")
+    ax.set_title("Total folding when SPANGY is rerun on the reference mesh (0 = no change)", loc="left")
+    ax.margins(y=0.2)
+    fig.suptitle("Is the change bigger for sessions far from the reference?", x=0.01, ha="left",
+                 fontsize=14, fontweight="bold")
+    caption(fig, "Total folding is SPANGY's folding power (all bands from 1 upwards). If the change grows "
+                 "with distance, the earliest sessions are the ones where rerunning SPANGY on the "
+                 "reference mesh is least reliable.")
     fig.tight_layout()
-    save(fig, f"{out}/6_band_power_vs_distance.png")
-    return pw
+    return save(fig, f"{out}/4_change_with_distance.png")
 
 
-# --- report --------------------------------------------------------------------
-def img_tag(path):
+def fig_worst(ps, out, n=12):
+    d = ps.assign(name=ps["subject"].str.replace("sub-", "") + ", "
+                  + ps["hemi"].map({"L": "left", "R": "right"}) + ", session "
+                  + ps["session"].map(ses_num).astype(str) + "  (reference "
+                  + ps["ref"].map(ses_num).astype(str) + ")")
+    d = d.nsmallest(n, "restex_vs_onref_same_label")[::-1]
+    fig, ax = plt.subplots(figsize=(8.5, 0.4 * len(d) + 1.6))
+    y = np.arange(len(d))
+    v = 100 * d["restex_vs_onref_same_label"].values
+    ax.barh(y, v, height=0.65, color=AGREE_MAIN, alpha=0.85, edgecolor=SURFACE, linewidth=1.5)
+    for yi, vi in zip(y, v):
+        ax.text(vi, yi, f" {vi:.0f}%", va="center", fontsize=9, color=INK)
+    ax.set_yticks(y, d["name"])
+    ax.grid(axis="x"); ax.grid(axis="y", visible=False)
+    ax.set_xlim(0, 108)
+    ax.set_xlabel("% of the surface with the same band and side in both versions")
+    fig.suptitle(f"The {len(d)} sessions where the two versions disagree most", x=0.01, ha="left",
+                 fontsize=14, fontweight="bold")
+    caption(fig, "Look at these sessions first in the viewer (prepare_route_viewer.py puts every version "
+                 "on inflated surfaces).")
+    fig.tight_layout()
+    return save(fig, f"{out}/5_sessions_that_disagree_most.png")
+
+
+# --- report ------------------------------------------------------------------------
+def img(path):
     with open(path, "rb") as fh:
-        return f'<img src="data:image/png;base64,{base64.b64encode(fh.read()).decode()}">'
+        return f'<img alt="" src="data:image/png;base64,{base64.b64encode(fh.read()).decode()}">'
 
 
-def html_table(df, fmt="{:.3f}"):
-    return df.to_html(float_format=lambda v: fmt.format(v), border=0, classes="t", na_rep="–")
+def summary(ps, pw):
+    rows = [
+        ("Same band and same side in both shared-mesh versions", 100 * ps["restex_vs_onref_same_label"], "%"),
+        ("Same side (sulcus or gyrus) in both versions", 100 * ps["restex_vs_onref_same_side"], "%"),
+    ]
+    if "curv_corr_restex_vs_onref" in ps:
+        rows.append(("Curvature: moved maps vs recomputed on the reference mesh (correlation)",
+                     ps["curv_corr_restex_vs_onref"], ""))
+    if "frac_maxdiff_restex_vs_orig" in ps:
+        rows.append(("Largest band coverage difference from the original, maps moved (percentage points)",
+                     100 * ps["frac_maxdiff_restex_vs_orig"], ""))
+        rows.append(("Largest band coverage difference from the original, SPANGY rerun (percentage points)",
+                     100 * ps["frac_maxdiff_onref_vs_orig"], ""))
+    if "afp_rel_diff_onref_vs_orig" in ps:
+        rows.append(("Total folding, SPANGY rerun vs original (% change)", 100 * ps["afp_rel_diff_onref_vs_orig"], "%"))
+    if "area_ratio_ref_vs_orig" in ps:
+        rows.append(("Surface area of the resampled surface vs the original (%)", 100 * ps["area_ratio_ref_vs_orig"], "%"))
+    body = "".join(f"<tr><td>{name}</td><td>{fmt(np.nanmedian(v), u)}</td>"
+                   f"<td>{fmt(np.nanmin(v), u)} to {fmt(np.nanmax(v), u)}</td></tr>" for name, v, u in rows)
+    return f"<table><tr><th>Measure</th><th>Median</th><th>Range</th></tr>{body}</table>"
 
 
-def write_report(d, figs, ps, pw, wide, texture):
-    med = lambda s: f"{s.median():.3f} [{s.min():.3f}, {s.max():.3f}]"
-    rows = []
-    for c, name in [("restex_vs_onref_same_label", "Same label, RESTEX vs ONREF"),
-                    ("restex_vs_onref_same_band", "Same band, RESTEX vs ONREF"),
-                    ("restex_vs_onref_same_side", "Same side, RESTEX vs ONREF"),
-                    ("restex_vs_onref_kappa", "Cohen's kappa, RESTEX vs ONREF"),
-                    ("curv_corr_restex_vs_onref", "Mean-curvature correlation"),
-                    ("frac_maxdiff_restex_vs_orig", "Max band-share difference, RESTEX vs ORIG"),
-                    ("frac_maxdiff_onref_vs_orig", "Max band-share difference, ONREF vs ORIG"),
-                    ("afp_rel_diff_onref_vs_orig", "Folding power, ONREF vs ORIG (relative)"),
-                    ("area_ratio_ref_vs_orig", "Surface area, reference-mesh / original")]:
-        if c in ps:
-            rows.append((name, med(ps[c])))
-    summary = pd.DataFrame(rows, columns=["Measure", "Median [min, max]"])
+EXPLAIN = {
+    "1": ("Both shared-mesh versions put every session on the reference session's vertices, so they can be "
+          "compared point by point. Dark bars: share of the surface where they give exactly the same band "
+          "on the same side (sulcus or gyrus). Light bars: share where they at least agree on sulcus versus "
+          "gyrus.",
+          "High values mean it hardly matters which version you use. If agreement falls for sessions far "
+          "from the reference, the choice matters most for the early sessions."),
+    "2": ("For each band, how much of the brain surface it covers in each version, compared with the "
+          "original mesh, which involves no interpolation and is the benchmark.",
+          "The version with the shorter bars stays closer to the original and is the safer choice for "
+          "vertex-by-vertex analyses."),
+    "3": ("The strength of each band over the whole hemisphere when SPANGY is rerun on the resampled "
+          "surface, as a % change from the original mesh.",
+          "Bars near 0 mean resampling the surface did not change the result. Clearly negative bars in "
+          "bands 5 and 6 mean fine folds were smoothed out."),
+    "4": ("The change in total folding when SPANGY is rerun on the resampled surface, grouped by how far "
+          "the session is from the reference.",
+          "If the bars grow for sessions far from the reference, avoid the rerun version for those "
+          "sessions, or for all of them."),
+    "5": ("The sessions where the two shared-mesh versions agree least.",
+          "These are the first sessions to look at in the viewer."),
+}
 
-    by_dist = ps.groupby("distance")[[c for c in ("restex_vs_onref_same_label",
-                                                  "restex_vs_onref_kappa",
-                                                  "curv_corr_restex_vs_onref") if c in ps]].median()
-    by_dist.index.name = "sessions before ref"
-    by_dist.columns = [c.replace("restex_vs_onref_", "").replace("curv_corr_restex_vs_onref", "curv_corr")
-                       for c in by_dist.columns]
 
-    share_err = None
-    if wide is not None:
-        w = wide[wide["band"].isin(["B3", "B4", "B5", "B6"])]
-        share_err = pd.DataFrame({
-            "RESTEX |Δ| vs ORIG": (w["RESTEX"] - w["ORIG"]).abs().groupby(w["band"]).median(),
-            "ONREF |Δ| vs ORIG": (w["ONREF"] - w["ORIG"]).abs().groupby(w["band"]).median()})
-        share_err.index.name = "band (median over sessions and sides)"
-
-    power = None
-    if pw is not None:
-        power = (100 * pw.groupby("band")["rel_diff"].agg(["median", "min", "max"]))
-        power = power.loc[sorted(power.index, key=lambda b: int(b[1:]))]
-        power.index.name = "band"
-        power.columns = ["median %", "min %", "max %"]
-
-    ref_rows = ps[ps["distance"] == 0]
-    ref_note = ""
-    if len(ref_rows):
-        ref_note = (f"<p class='note'><b>Sanity check (reference sessions, {len(ref_rows)} rows):</b> "
-                    f"same-label agreement {ref_rows['restex_vs_onref_same_label'].min():.3f}–"
-                    f"{ref_rows['restex_vs_onref_same_label'].max():.3f}. These should be ≈ 1, since the "
-                    f"resampled surface is the original mesh there.</p>")
-
+def write_report(d, figs, ps, pw, texture):
     parts = [f"""<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SPANGY route comparison</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>SPANGY versions</title>
 <style>
-:root{{--surface:{SURFACE};--ink:{INK};--ink2:{INK2};--grid:{GRID}}}
-body{{background:var(--surface);color:var(--ink);font:14px/1.5 system-ui,sans-serif;
-      max-width:1100px;margin:0 auto;padding:24px 16px}}
-h1{{font-size:22px;margin:0 0 4px}} h2{{font-size:16px;margin:28px 0 8px}}
-p,li{{color:var(--ink2)}} img{{max-width:100%;height:auto;margin:8px 0}}
-table.t{{border-collapse:collapse;font-size:13px;margin:8px 0}}
-table.t th,table.t td{{padding:4px 10px;border-bottom:1px solid var(--grid);text-align:right}}
-table.t th:first-child,table.t td:first-child{{text-align:left}}
-.note{{border-left:3px solid var(--grid);padding-left:10px}}
+body{{background:{SURFACE};color:{INK};font:15px/1.6 system-ui,sans-serif;max-width:1000px;margin:0 auto;padding:24px 16px}}
+h1{{font-size:24px;margin:0 0 6px}} h2{{font-size:18px;margin:32px 0 6px}} p,li{{color:{INK2}}}
+img{{max-width:100%;height:auto;margin:10px 0}}
+table{{border-collapse:collapse;font-size:14px;margin:8px 0;width:100%}}
+th,td{{padding:6px 10px;border-bottom:1px solid {GRID};text-align:right}}
+th:first-child,td:first-child{{text-align:left}}
+.box{{border-left:3px solid {GRID};padding:2px 12px;margin:6px 0}}
 </style></head><body>
-<h1>SPANGY route comparison — {texture} registrations</h1>
-<p>{ps['subject'].nunique()} animals, {len(ps)} animal/hemisphere/session rows.
-<b>ORIG</b> = SPANGY on the original mesh · <b>RESTEX</b> = ORIG textures resampled onto the reference mesh ·
-<b>ONREF</b> = SPANGY on the surface resampled onto the reference mesh.</p>
-<h2>Summary</h2>{html_table(summary)}{ref_note}
-<h2>Agreement by distance from the reference</h2>{html_table(by_dist)}"""]
-    labels = {
-        "1": "RESTEX and ONREF share vertices, so they are compared vertex by vertex (area-weighted). "
-             "Agreement is expected to fall for sessions far from the reference.",
-        "2": "Every compared session. Low cells point to sessions to inspect visually.",
-        "3": "Correlation of the z-filtered mean curvature: how much resampling the geometry "
-             "changes the curvature SPANGY analyses.",
-        "4": "Area share of each band, computed on each route's own mesh. ORIG involves no interpolation, "
-             "so the route closer to the identity line distorts less.",
-        "5": "Global SPANGY band powers. A systematic negative shift in B5–B6 means fine folds were "
-             "flattened by resampling the surface.",
-        "6": "Whether the band-power shift depends on how far the session is from the reference.",
-    }
+<h1>Which SPANGY version to use on a shared mesh?</h1>
+<p>{ps['subject'].nunique()} animals, {len(ps)} sessions, using the {texture} registrations. Three versions of each
+session's SPANGY result are compared:</p>
+<ul><li><b>Original mesh</b>: SPANGY on the session's own mesh. No interpolation, so this is the benchmark.</li>
+<li><b>Maps moved to the reference mesh</b>: the original maps resampled onto the reference session's vertices.</li>
+<li><b>SPANGY rerun on the reference mesh</b>: the session's surface resampled onto the reference session's
+vertices, then SPANGY run again on it.</li></ul>
+<p>The last two share vertices with every other session of the same animal, which is what vertex-by-vertex
+analyses need. The question is which of them stays closer to the original.</p>
+<h2>Summary</h2>{summary(ps, pw)}"""]
     for f in figs:
         k = os.path.basename(f)[0]
-        parts.append(f"<h2>{os.path.basename(f)[2:-4].replace('_', ' ').capitalize()}</h2>"
-                     f"<p>{labels.get(k, '')}</p>{img_tag(f)}")
-        if k == "4" and share_err is not None:
-            parts.append(html_table(share_err))
-        if k == "5" and power is not None:
-            parts.append(html_table(power, "{:.1f}"))
-    parts.append("<p class='note'>Tables: per_session.csv, band_area_fractions.csv, band_powers.csv "
-                 "in the same folder.</p></body></html>")
+        what, read = EXPLAIN.get(k, ("", ""))
+        parts.append(f"{img(f)}<div class='box'><p><b>What is shown.</b> {what}</p>"
+                     f"<p><b>How to read it.</b> {read}</p></div>")
+    parts.append("</body></html>")
     path = f"{d}/report.html"
     with open(path, "w") as fh:
         fh.write("\n".join(parts))
@@ -312,22 +325,21 @@ def main():
     d = args.dir or f"{BASE}/spangy_route_comparison/{args.texture}"
     out = f"{d}/figures"
     os.makedirs(out, exist_ok=True)
+    for old in os.listdir(out):                    # drop figures from the previous version
+        if old.endswith(".png"):
+            os.remove(f"{out}/{old}")
 
     ps = pd.read_csv(f"{d}/per_session.csv")
-    ps["distance"] = ps["ref"].map(ses_num) - ps["session"].map(ses_num)
+    ps["gap"] = ps["ref"].map(ses_num) - ps["session"].map(ses_num)
     fr = pd.read_csv(f"{d}/band_area_fractions.csv")
     pw_path = f"{d}/band_powers.csv"
     pw = pd.read_csv(pw_path) if os.path.isfile(pw_path) else None
     print(f"{len(ps)} sessions from {d}")
 
-    fig_agreement_vs_distance(ps, out)
-    fig_heatmap(ps, out)
-    fig_curvature(ps, out)
-    wide = fig_band_shares(fr, out)
-    if pw is not None:
-        pw = fig_band_power(pw, ps, out)
-    figs = sorted(f"{out}/{f}" for f in os.listdir(out) if f.endswith(".png"))
-    write_report(d, figs, ps, pw, wide, args.texture)
+    figs = [fig_agree(ps, out), fig_coverage(fr, out),
+            fig_power(pw, out) if pw is not None else None,
+            fig_distance(ps, out), fig_worst(ps, out)]
+    write_report(d, [f for f in figs if f], ps, pw, args.texture)
 
 
 if __name__ == "__main__":

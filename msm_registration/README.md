@@ -416,9 +416,12 @@ Tables: `spangy_route_comparison/<texture>/per_session.csv`, `band_area_fraction
 `band_powers.csv`; a median/min/max summary is printed at the end. The reference session is
 a sanity check: its resampled surface is its original mesh, so ONREF should match ORIG there.
 
-Figures and report: `python plot_spangy_routes.py [--texture dpfstar]` writes six PNGs to
-`spangy_route_comparison/<texture>/figures/` and one self-contained `report.html` (figures +
-summary tables). Use `--dir <folder>` on a copied comparison folder to run it locally.
+Figures and report: `python plot_spangy_routes.py [--texture dpfstar]` writes five PNGs to
+`spangy_route_comparison/<texture>/figures/`, each titled with the question it answers (do the
+two shared-mesh versions agree; which keeps band coverage closest to the original; does rerunning
+SPANGY change band strength; does that grow with distance from the reference; which sessions
+disagree most), and one self-contained `report.html` with a plain-language explanation under
+each figure. Use `--dir <folder>` on a copied comparison folder to run it locally.
 
 ### Viewing the routes on inflated surfaces
 
