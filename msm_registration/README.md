@@ -356,8 +356,21 @@ python spangy_babofet_pymesh.py --merge                # per-subject + pooled CS
 ```
 
 Output: `<sub>/analysis/spangy_pymesh/` (textures `spangy_dom_band_<sub>_<ses>_hemi-<H>.gii`,
-mean/principal curvature, spectra plots, per-file JSON, CSVs); pooled table
-`analysis_pooled/all_subjects_spangy_pymesh_results.csv`.
+mean/principal curvature, spectra plots, one results CSV per mesh in `results/per_file/`); `--merge`
+writes per-subject CSVs and the pooled table `analysis_pooled/all_subjects_spangy_pymesh_results.csv`.
+
+Columns of the results tables, one row per mesh:
+- identifiers (`subject`, `session`, `hemisphere`, `participant_session`), then whole-brain
+  metrics (volume, surface area, gyrification index, folding power `analyze_folding_power`, ...);
+- `band_power_B0` … `band_power_B6`: SPANGY power of each band;
+- `band_prop_B1` … `band_prop_B6`: each band's share of the folding power (power / sum of B1–B6;
+  B0, the mean-curvature offset, is left out, as in the folding power);
+- `dom_area_pct_B1` … `B6`, with `_sulcal` and `_gyral`: % of the hemisphere's surface area where
+  that band is the dominant band; `det_area_pct_…`: the same for the determinant band. These are
+  true surface areas, not vertex counts, so meshes of different density compare correctly.
+
+Results written as JSON by earlier runs are still read by `--merge`, but have no proportions or
+area shares; those meshes are redone on the next run anyway (they lack the new textures).
 
 `spangy_babofet_pymesh.py` is the BaboFet SPANGY script, adapted to the Pymesh layout.
 The SPANGY computation is unchanged: 4000 eigenpairs, z-filtered mean curvature,
@@ -390,6 +403,36 @@ writes `<sub>_hemi-<H>_resample_qc.txt`, which you should check before SPANGY:
 SPANGY output: `<sub>/analysis/spangy_onref_<texture>/`; pooled
 `analysis_pooled/all_subjects_spangy_onref_<texture>_results.csv`.
 
+### Moving SPANGY maps to the reference mesh without interpolating labels
+
+```bash
+$PYTHON resample_spangy_bands.py                      # sulc registrations
+$PYTHON resample_spangy_bands.py --texture dpfstar --roundtrip
+```
+
+`spangy_babofet_pymesh.py` now also saves `spangy_frecomposed_<label>.gii`: the filtered mean
+curvature recomposed in each band (one column per band), from which slam derives the dominant
+band. Meshes processed before this was added are redone automatically on the next run.
+
+It also saves `spangy_det_band_<label>.gii`, the locally **determinant** band (Germanaud et al.
+2012, Appendix C), computed by `spangy_determinance.py` from the same per-band values added up band
+by band: each vertex gets the highest band at which it switched between sulcal and gyral, signed
+by its final side (negative = sulcal). A vertex that is sulcal from band 1 onwards gets -1; the
+paper's literal rule leaves it unlabelled (`paper_strict=True`).
+
+`resample_spangy_bands.py` moves those per-band values and the curvature to the reference mesh
+with area-weighted interpolation, then recomputes the dominant band there with slam's rule,
+instead of resampling the band labels themselves. Output in
+`spangy_on_ref/<texture>/<sub>/hemi-<H>/`: `<label>_on_<ref>.dom_band_from_bands.func.gii`,
+`.frecomposed.func.gii`, `.filt_mean_curv.func.gii` and `.band_margin.func.gii` (how clearly the
+winning band won; 0 = tie), plus the determinant band recomputed the same way,
+`.det_band_from_bands.func.gii`, with `.det_band_margin.func.gii`. The two principal curvatures that SPANGY
+saves (`curvature/principal/`) are moved the same way, to `.principal_curv.func.gii` (2 columns). `resample_bands_summary.csv` reports, per session:
+- whether slam's rule reproduces the saved map on the original mesh (should be 100%);
+- agreement with simple label resampling;
+- with `--roundtrip`, how much of the original map survives being moved to the reference mesh
+  and back, for this method and for label resampling.
+
 ### Comparing the routes
 
 ```bash
@@ -410,7 +453,7 @@ versions of every session:
   sulcal/gyral side, bands off by one, Cohen's kappa, and the correlation of mean curvature.
 - **All three:** the share of surface area dominated by each signed band, computed on each
   route's own mesh.
-- **ORIG vs ONREF:** global band powers and folding power, from SPANGY's per-file JSON.
+- **ORIG vs ONREF:** global band powers and folding power, from SPANGY's per-file results.
 
 Tables: `spangy_route_comparison/<texture>/per_session.csv`, `band_area_fractions.csv`,
 `band_powers.csv`; a median/min/max summary is printed at the end. The reference session is
@@ -552,6 +595,8 @@ All under `/envau/work/meca/users/dienye.h/python_files/Babofet/`:
 | `plot_msm_reg_metrics.py` | login / local | Step 3: figures + `report.html` from the metrics CSV |
 | `chain_to_reference.sh` | login | Step 4 |
 | `resample_to_ref.py` | login | Step 5B: surfaces onto the reference mesh + QC |
+| `spangy_determinance.py` | imported | determinant band from the per-band synthesis (also `local_determinance_map`, same signature as slam's dominance function) |
+| `resample_spangy_bands.py` | login | Step 5A: per-band SPANGY values onto the reference mesh, dominant band recomputed there |
 | `spangy_babofet_pymesh.py` | SLURM | Step 5: SPANGY (`--onref`, `--reg-texture`, `--list`, `--merge`, `--force`) |
 | `run_spangy_pymesh.sh` | SLURM | Step 5 job array (pass options via `SPANGY_ARGS`) |
 | `compare_spangy_routes.py` | login | Step 5: compare ORIG / RESTEX / ONREF; saves the resampled ORIG textures |

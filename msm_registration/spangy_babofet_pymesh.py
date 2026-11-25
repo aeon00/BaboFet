@@ -19,9 +19,18 @@ Outputs, per subject (separate from older SPANGY runs on other meshes):
     <DATA_ROOT>/sub-<NAME>/analysis/spangy_pymesh/
         plots/                      spectrum figures
         textures/                   spangy_dom_band_<sub>_<ses>_hemi-<L|R>.gii
+                                    spangy_frecomposed_<sub>_<ses>_hemi-<L|R>.gii
+                                      (one column per band B1..B<n>: curvature recomposed
+                                       in that band; input of resample_spangy_bands.py)
+                                    spangy_det_band_<sub>_<ses>_hemi-<L|R>.gii
+                                      (locally determinant band, spangy_determinance.py)
         curvature/principal/        principal curvature textures
         curvature/mean/             z-filtered mean curvature textures
-        results/per_file/*.json     one row per mesh (authoritative)
+        results/per_file/*.csv      one row per mesh (authoritative): whole-brain metrics,
+                                    band_power_B0..B6, band_prop_B1..B6 (share of folding
+                                    power), dom_/det_area_pct_B1..B6 (+ _sulcal, _gyral):
+                                    % of the surface area where each band is the dominant /
+                                    determinant band
         results/chunk_<id>.csv      convenience dump per SLURM task
         results/sub-<NAME>_spangy_results.csv   <- written by --merge
 
@@ -58,6 +67,8 @@ import slam.io as sio
 import slam.texture as stex
 import slam.curvature as scurv
 import slam.spangy as spgy
+
+from spangy_determinance import determinant_band   # same folder as this script
 
 # --- Configuration -----------------------------------------------------------
 MESH_ROOT = '/envau/work/meca/users/dienye.h/Pymesh/mesh'
@@ -167,6 +178,64 @@ def get_gyrification_index(mesh):
     return float(mesh.area) / hull_area, hull_area
 
 
+def vertex_areas(mesh):
+    """Area represented by each vertex: one third of every triangle around it."""
+    va = np.zeros(len(mesh.vertices))
+    for k in range(3):
+        np.add.at(va, mesh.faces[:, k], mesh.area_faces / 3.0)
+    return va
+
+
+def band_summary(grouped_spectrum, dom_band, det_band, areas):
+    """
+    Per band k = 0..6:
+      band_power_Bk         SPANGY power of the band (grouped spectrum)
+      band_prop_Bk          share of the folding power, power_k / sum(power_1..power_6)
+                            (B0, the mean curvature offset, is left out as in AFP; k >= 1)
+    Per band k = 1..6, for the dominant (dom_) and determinant (det_) maps:
+      <map>_area_pct_Bk         % of the hemisphere surface where band k is the band
+      <map>_area_pct_Bk_sulcal  % of the surface, sulcal part (negative labels)
+      <map>_area_pct_Bk_gyral   % of the surface, gyral part (positive labels)
+    Areas are true surface areas on the mesh, not vertex counts.
+    """
+    out = {}
+    gs = np.asarray(grouped_spectrum, dtype=np.float64)
+    folding = gs[1:].sum() if len(gs) > 1 else np.nan
+    for i in range(N_BANDS):
+        p = float(gs[i]) if i < len(gs) else np.nan
+        out[f'band_power_B{i}'] = p
+        if i >= 1:
+            out[f'band_prop_B{i}'] = p / folding if folding else np.nan
+    total = areas.sum()
+    for name, lab in (('dom', dom_band), ('det', det_band)):
+        lab = np.rint(np.asarray(lab, dtype=np.float64)).astype(int)
+        for k in range(1, N_BANDS):
+            gy = areas[lab == k].sum() / total * 100.0
+            su = areas[lab == -k].sum() / total * 100.0
+            out[f'{name}_area_pct_B{k}'] = gy + su
+            out[f'{name}_area_pct_B{k}_sulcal'] = su
+            out[f'{name}_area_pct_B{k}_gyral'] = gy
+        out[f'{name}_area_pct_unlabelled'] = areas[lab == 0].sum() / total * 100.0
+    return out
+
+
+ID_COLUMNS = ['subject', 'subject_folder', 'session', 'hemisphere', 'participant_session']
+
+
+def order_columns(df):
+    """Identifiers first, then whole-brain metrics, band powers, proportions, area shares."""
+    first = [c for c in ID_COLUMNS if c in df]
+    groups = [c for c in df if c not in first and not c.startswith(('band_', 'dom_', 'det_'))]
+    for prefix in ('band_power_', 'band_prop_', 'dom_area_pct_', 'det_area_pct_'):
+        groups += [c for c in df if c.startswith(prefix)]
+    rest = [c for c in df if c not in first + groups]
+    return df[first + groups + rest]
+
+
+def write_row(row, path):
+    order_columns(pd.DataFrame([row])).to_csv(path, index=False)
+
+
 # --- Core processing ---------------------------------------------------------
 def process_single_file(subject, mesh_file, dirs, n_eigen=N_EIGENPAIRS, force=False):
     try:
@@ -178,12 +247,16 @@ def process_single_file(subject, mesh_file, dirs, n_eigen=N_EIGENPAIRS, force=Fa
             return None
 
         # --- Skip if already processed (safe SLURM resubmission) -------------
-        row_path = os.path.join(dirs['per_file'], f'{label}.json')
+        row_path = os.path.join(dirs['per_file'], f'{label}.csv')
         texture_out = os.path.join(dirs['textures'], f'spangy_dom_band_{label}.gii')
-        if not force and os.path.exists(row_path) and os.path.exists(texture_out):
+        frecomposed_out = os.path.join(dirs['textures'], f'spangy_frecomposed_{label}.gii')
+        det_band_out = os.path.join(dirs['textures'], f'spangy_det_band_{label}.gii')
+        # frecomposed and the determinant band are required too: meshes processed
+        # before they were saved are redone
+        if (not force and os.path.exists(row_path) and os.path.exists(texture_out)
+                and os.path.exists(frecomposed_out) and os.path.exists(det_band_out)):
             print(f"  Skipping {label} - already processed.")
-            with open(row_path) as fh:
-                return json.load(fh)
+            return pd.read_csv(row_path).iloc[0].to_dict()
 
         # Vertex order is preserved (process=False), so textures match the
         # mesh used for MSM. The inertia alignment only rotates/translates.
@@ -257,6 +330,21 @@ def process_single_file(subject, mesh_file, dirs, n_eigen=N_EIGENPAIRS, force=Fa
             return None
         sio.write_texture(stex.TextureND(loc_dom_band), texture_out)
 
+        # Per-band recomposition of the filtered mean curvature (bands B1 ... B<levels-1>),
+        # one column per band. The dominant band above is derived from these values and
+        # the curvature sign, so resampling them (resample_spangy_bands.py) and
+        # recomputing the band on another mesh avoids interpolating labels.
+        frec = np.asarray(frecomposed, dtype=np.float64)          # slam returns dtype=object
+        if frec.shape[0] != n_vertices:
+            print(f"  Error: frecomposed has {frec.shape[0]} rows, mesh has {n_vertices} vertices")
+            return None
+        sio.write_texture(stex.TextureND(frec.T), frecomposed_out)
+
+        # Locally determinant band (Germanaud 2012, Appendix C), from the same
+        # per-band synthesis, cumulated band by band (spangy_determinance.py).
+        loc_det_band = determinant_band(frec)
+        sio.write_texture(stex.TextureND(loc_det_band.astype(np.float64)), det_band_out)
+
         gyrification_index, hull_area = get_gyrification_index(mesh)
         execution_time = time.time() - start_time
         print(f"  Done in {execution_time:.2f}s")
@@ -281,12 +369,9 @@ def process_single_file(subject, mesh_file, dirs, n_eigen=N_EIGENPAIRS, force=Fa
             'analyze_folding_power': afp,
             'processing_time_s':    execution_time,
         }
-        # Band powers, robust to spectra with fewer than N_BANDS levels
-        for i in range(N_BANDS):
-            row[f'band_power_B{i}'] = float(grouped_spectrum[i]) if i < len(grouped_spectrum) else np.nan
-
-        with open(row_path, 'w') as fh:
-            json.dump(row, fh, indent=2)
+        row.update(band_summary(grouped_spectrum, loc_dom_band, loc_det_band,
+                                vertex_areas(mesh)))
+        write_row(row, row_path)
         return row
 
     except Exception as e:
@@ -296,24 +381,34 @@ def process_single_file(subject, mesh_file, dirs, n_eigen=N_EIGENPAIRS, force=Fa
 
 # --- Merge -------------------------------------------------------------------
 def merge_results(root, mesh_root, wanted=None, exclude=None):
-    """Collect per-file JSON rows into per-subject CSVs and one pooled CSV."""
+    """Collect per-file CSV rows (older JSON rows too) into per-subject and pooled CSVs."""
     os.makedirs(POOLED_DIR, exist_ok=True)
     pooled = []
 
     for subject in find_subjects(mesh_root, wanted, exclude):
         per_file_dir = os.path.join(root, subject, OUT_SUBDIR, 'results', 'per_file')
         rows = []
-        for path in sorted(glob.glob(os.path.join(per_file_dir, '*.json'))):
+        csvs = sorted(glob.glob(os.path.join(per_file_dir, '*.csv')))
+        have = {os.path.basename(c)[:-4] for c in csvs}
+        olds = [j for j in sorted(glob.glob(os.path.join(per_file_dir, '*.json')))
+                if os.path.basename(j)[:-5] not in have]
+        for path in csvs + olds:
             try:
-                with open(path) as fh:
-                    rows.append(json.load(fh))
+                if path.endswith('.csv'):
+                    rows.append(pd.read_csv(path).iloc[0].to_dict())
+                else:
+                    with open(path) as fh:
+                        rows.append(json.load(fh))
             except Exception as e:
                 print(f"Warning: could not read {path}: {e}")
+        if olds:
+            print(f"  {subject}: {len(olds)} older JSON rows without band shares "
+                  f"(rerun those meshes to add them)")
         if not rows:
             print(f"  {subject}: no results yet")
             continue
 
-        df = pd.DataFrame(rows).sort_values(['session', 'hemisphere'])
+        df = order_columns(pd.DataFrame(rows)).sort_values(['session', 'hemisphere'])
         out = os.path.join(root, subject, OUT_SUBDIR, 'results',
                            f'{subject}_spangy_results.csv')
         df.to_csv(out, index=False)
@@ -324,7 +419,7 @@ def merge_results(root, mesh_root, wanted=None, exclude=None):
         print("No results found to pool.")
         return None
 
-    pooled_df = pd.concat(pooled, ignore_index=True)
+    pooled_df = order_columns(pd.concat(pooled, ignore_index=True))
     pooled_df = pooled_df.drop_duplicates(subset='participant_session', keep='last')
     pooled_df = pooled_df.sort_values(['subject', 'session', 'hemisphere'])
     pooled_path = os.path.join(POOLED_DIR, POOLED_NAME)

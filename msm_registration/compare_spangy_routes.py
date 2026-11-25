@@ -106,10 +106,14 @@ def agreement(x, y, w):
 
 
 def json_row(path):
-    if not os.path.isfile(path):
-        return None
-    with open(path) as fh:
-        return json.load(fh)
+    """One SPANGY results row: the per-file CSV, or an older JSON row with the same name."""
+    base = path[:-5] if path.endswith(".json") else path
+    if os.path.isfile(base + ".csv"):
+        return pd.read_csv(base + ".csv").iloc[0].to_dict()
+    if os.path.isfile(base + ".json"):
+        with open(base + ".json") as fh:
+            return json.load(fh)
+    return None
 
 
 # --- main ----------------------------------------------------------------------
